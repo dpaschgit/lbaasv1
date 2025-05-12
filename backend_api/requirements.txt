@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+pydantic[email]
+
+# For MongoDB integration
+motor
+
+# For Authentication
+python-jose[cryptography]
+passlib[bcrypt]
+
+# For Ansible integration (to be added later)
+# ansible-runner
+

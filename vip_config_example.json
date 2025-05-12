@@ -1,0 +1,30 @@
+{
+  "vip_fqdn": "vip123.davelab.net",
+  "vip_ip": "1.1.1.100",
+  "app_id": "111111",
+  "environment": "Prod",
+  "datacenter": "LADC",
+  "primary_contact_email": "user@example.com",
+  "secondary_contact_email": "alt@example.com",
+  "team_distribution_email": "team@example.com",
+  "monitor": {
+    "type": "ECV",
+    "port": 8080,
+    "send": "GET /health HTTP/1.1",
+    "receive": "200 OK"
+  },
+  "persistence": {
+    "type": "source_ip",
+    "timeout": 300
+  },
+  "ssl_cert": "-----BEGIN CERTIFICATE-----...",
+  "ssl_key": "-----BEGIN PRIVATE KEY-----...",
+  "mtls_cert": "-----BEGIN CERTIFICATE-----...",
+  "mtls_key": "-----BEGIN PRIVATE KEY-----...",
+  "pool": [
+    { "ip": "10.0.0.1", "port": 8080 },
+    { "ip": "10.0.0.2", "port": 8080 }
+  ],
+  "owner": "user1"
+}
+

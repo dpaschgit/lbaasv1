@@ -1,0 +1,114 @@
+version: '3.8'
+
+services:
+  mongo:
+    image: mongo:latest
+    container_name: lbaas-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - lbaas_network
+
+  backend_api:
+    build:
+      context: ./backend_api
+      dockerfile: Dockerfile # Assuming a Dockerfile exists or will be created for backend_api
+    container_name: lbaas-backend-api
+    ports:
+      - "8000:8000"
+    depends_on:
+      - mongo
+      - mock_tcpwave
+      - mock_servicenow
+      # Translators will be called by backend_api, so they should be up
+      - translator_f5
+      - translator_avi
+      - translator_nginx
+    environment:
+      - MONGODB_URL=mongodb://mongo:27017
+      - TCPWAVE_MOCK_URL=http://mock_tcpwave:8001
+      - SERVICENOW_MOCK_URL=http://mock_servicenow:8002
+      - TRANSLATOR_F5_URL=http://translator_f5:8003
+      - TRANSLATOR_AVI_URL=http://translator_avi:8004
+      - TRANSLATOR_NGINX_URL=http://translator_nginx:8005
+      - SECRET_KEY=your-super-secret-key-for-jwt # Should be in .env in real app
+    volumes:
+      - ./backend_api:/app # For development hot-reloading if uvicorn is run with --reload
+    networks:
+      - lbaas_network
+
+  mock_tcpwave:
+    build:
+      context: ./mock_tcpwave
+      dockerfile: Dockerfile
+    container_name: lbaas-mock-tcpwave
+    ports:
+      - "8001:8001"
+    networks:
+      - lbaas_network
+
+  mock_servicenow:
+    build:
+      context: ./mock_servicenow
+      dockerfile: Dockerfile
+    container_name: lbaas-mock-servicenow
+    ports:
+      - "8002:8002"
+    networks:
+      - lbaas_network
+
+  translator_f5:
+    build:
+      context: ./translators/f5_as3_translator
+      dockerfile: Dockerfile
+    container_name: lbaas-translator-f5
+    ports:
+      - "8003:8003"
+    networks:
+      - lbaas_network
+
+  translator_avi:
+    build:
+      context: ./translators/avi_translator
+      dockerfile: Dockerfile
+    container_name: lbaas-translator-avi
+    ports:
+      - "8004:8004"
+    networks:
+      - lbaas_network
+
+  translator_nginx:
+    build:
+      context: ./translators/nginx_translator
+      dockerfile: Dockerfile
+    container_name: lbaas-translator-nginx
+    ports:
+      - "8005:8005"
+    networks:
+      - lbaas_network
+
+  # Optional: Backstage UI (if it were to be containerized and run as part of this stack)
+  # backstage_ui:
+  #   build:
+  #     context: ./backstage_ui/loadbalancer-portal # Assuming this is where the Backstage app is
+  #     dockerfile: Dockerfile # A Dockerfile would need to be created for Backstage
+  #   container_name: lbaas-backstage-ui
+  #   ports:
+  #     - "3000:3000" # Default Backstage port
+  #   depends_on:
+  #     - backend_api
+  #   environment:
+  #     - APP_CONFIG_app_baseUrl=http://localhost:3000
+  #     - APP_CONFIG_backend_baseUrl=http://localhost:8000 # Or backend_api service name if internal
+  #   networks:
+  #     - lbaas_network
+
+volumes:
+  mongo_data:
+
+networks:
+  lbaas_network:
+    driver: bridge
+
