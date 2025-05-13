@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Dict, Any
-from datetime import datetime # Added for potential timestamping
+from datetime import datetime, timezone # Ensure timezone is imported
 from bson import ObjectId # Added for potential direct use or validation
 
 # Pydantic V2 uses model_validator for root validators if needed.
@@ -18,8 +18,10 @@ class PyObjectId(ObjectId):
         return ObjectId(v)
 
     @classmethod
-    def __get_pydantic_json_schema__(cls, field_schema):
-        field_schema.update(type="string")
+    def __get_pydantic_json_schema__(cls, core_schema, handler):
+        # Pydantic V2 schema generation
+        from pydantic_core import core_schema as cs
+        return cs.str_schema()
 
 class Monitor(BaseModel):
     type: str = Field(..., example="ECV", description="Type of health monitor (e.g., HTTP, TCP, ICMP, ECV).")
@@ -34,8 +36,6 @@ class Persistence(BaseModel):
 class PoolMember(BaseModel):
     ip: str = Field(..., example="10.0.0.1", description="IP address of the backend server.")
     port: int = Field(..., example=8080, description="Port of the backend server.")
-    # weight: Optional[int] = Field(1, example=1, description="Weight of the server in the pool for weighted algorithms.")
-    # status: Optional[str] = Field(None, example="UP", description="Current operational status of the pool member.")
 
 class VipBase(BaseModel):
     vip_fqdn: str = Field(..., example="vip123.davelab.net", description="Fully Qualified Domain Name of the VIP.")
@@ -49,9 +49,6 @@ class VipBase(BaseModel):
     monitor: Monitor
     persistence: Optional[Persistence] = None
     ssl_cert_name: Optional[str] = Field(None, example="mycert.example.com", description="Name/reference to the SSL certificate for VIP termination.")
-    # Actual cert/key data might be handled differently, e.g., stored in a vault and referenced by name.
-    # ssl_cert_body: Optional[str] = Field(None, example="-----BEGIN CERTIFICATE-----...", description="SSL certificate body.")
-    # ssl_key_body: Optional[str] = Field(None, example="-----BEGIN PRIVATE KEY-----...", description="SSL private key body.")
     mtls_ca_cert_name: Optional[str] = Field(None, example="my-client-ca.pem", description="Name/reference to the CA certificate for mTLS client certificate validation.")
     pool: List[PoolMember]
     owner: str = Field(..., example="user1", description="Owner or creator of the VIP configuration.")
@@ -63,7 +60,6 @@ class VipCreate(VipBase):
     pass
 
 class VipUpdate(BaseModel):
-    # Allow partial updates for all fields in VipBase
     vip_fqdn: Optional[str] = Field(None, example="vip123.davelab.net")
     vip_ip: Optional[str] = Field(None, example="1.1.1.100")
     app_id: Optional[str] = Field(None, example="111111")
@@ -77,22 +73,30 @@ class VipUpdate(BaseModel):
     ssl_cert_name: Optional[str] = Field(None, example="mycert.example.com")
     mtls_ca_cert_name: Optional[str] = Field(None, example="my-client-ca.pem")
     pool: Optional[List[PoolMember]] = None
-    owner: Optional[str] = Field(None, example="user1")
+    owner: Optional[str] = Field(None, example="user1") # Owner might not be updatable directly by user, but by system/admin
     port: Optional[int] = Field(None, example=443)
     protocol: Optional[str] = Field(None, example="HTTPS")
     lb_method: Optional[str] = Field(None, example="LEAST_CONNECTIONS")
-    # servicenow_incident_id: Optional[str] = Field(None, description="Required for modify/delete operations by non-admins")
 
-class VipResponse(VipBase):
-    id: str = Field(..., alias="_id", example="60d5ecf001a8f3001f8e4d2a", description="Unique identifier for the VIP (MongoDB ObjectId).")
-    # status: str = Field(..., example="ACTIVE", description="Current operational status of the VIP.")
-    # created_at: datetime = Field(..., description="Timestamp of VIP creation.")
-    # updated_at: datetime = Field(..., description="Timestamp of last VIP update.")
+# Correctly defining VipDB for database interaction
+class VipDB(VipBase):
+    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Config:
         populate_by_name = True # Allows using alias _id for id field
         from_attributes = True  # Pydantic V2 for ORM mode / from_orm
         json_encoders = {
-            ObjectId: str # Ensure ObjectId is serialized to string
+            ObjectId: str,
+            datetime: lambda dt: dt.isoformat() # Ensure datetime is serialized to ISO string
         }
+        # For Pydantic V2, arbitrary_types_allowed is True by default if needed for ObjectId
+        # but PyObjectId handles custom validation and serialization.
 
+# VipResponse can be an alias or a specific response model if different from VipDB
+# For now, let's assume API responses can use VipDB structure directly or a simplified one.
+# If VipResponse was intended to be different, it should be defined accordingly.
+# The previous VipResponse definition is removed to avoid confusion with VipDB, 
+# as main.py uses VipDB for response_model in GET operations.
+# If a different response structure is needed, it can be added back as VipResponse.

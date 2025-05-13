@@ -1,14 +1,11 @@
 fastapi
 uvicorn[standard]
 pydantic[email]
-
-# For MongoDB integration
 motor
-
-# For Authentication
-python-jose[cryptography]
-passlib[bcrypt]
-
-# For Ansible integration (to be added later)
+passlib[bcrypt]  # Ensures bcrypt extras are installed with passlib
+python-multipart # For FastAPI form data (OAuth2PasswordRequestForm)
+python-jose[cryptography] # For JWT tokens
+httpx
+# For Ansible integration (to be added later if direct execution is needed)
 # ansible-runner
 

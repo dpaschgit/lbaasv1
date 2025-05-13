@@ -4,7 +4,7 @@ import httpx
 import asyncio
 from typing import Dict, Any, Optional
 
-from .models import VipBase # For type hinting if needed
+from models import VipBase # For type hinting if needed
 
 # --- Configuration for Mock Services (URLs will be defined when mocks are built) ---
 # These URLs assume the mock services will be running and accessible.

@@ -3,15 +3,15 @@ from typing import List, Dict, Optional, Any
 from uuid import uuid4
 import motor.motor_asyncio
 
-from .models import VipBase, VipCreate, VipDB, VipUpdate, PoolMember, Monitor, Persistence # Ensure models are correctly imported
-from .auth import get_current_active_user, User, auth_router # Import auth components
-from .integrations import (
+from models import VipBase, VipCreate, VipDB, VipUpdate, PoolMember, Monitor, Persistence # Ensure models are correctly imported
+from auth import get_current_active_user, User, auth_router # Import auth components
+from integrations import (
     call_tcpwave_ipam_mock,
     call_servicenow_cmdb_mock,
     call_servicenow_incident_validation_mock,
     call_translator_module
 )
-from .db import get_database, get_vips_collection
+from db import get_database, get_vips_collection
 
 # --- App Initialization ---
 app = FastAPI(
