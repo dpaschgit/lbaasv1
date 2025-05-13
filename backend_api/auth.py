@@ -1,103 +1,89 @@
-# auth.py
-
-from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Dict, Any
-
-from fastapi import Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from pydantic import BaseModel, EmailStr
+from datetime import datetime, timedelta, timezone
+from typing import Optional, Dict, List
+from pydantic import BaseModel # Import BaseModel
 
 # --- Configuration ---
-SECRET_KEY = "your-secret-key"  # Replace with a strong, unique key in a real app (e.g., from env var)
+SECRET_KEY = "your-secret-key-for-jwt"  # Replace with a strong, random key in production
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
+# Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# OAuth2 scheme
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
 
-# --- Mock User Database ---
-# In a real app, this would come from your database (e.g., MongoDB users collection)
-# For mock purposes, we define users with roles here.
-# Passwords are "testpassword" for all mock users.
-MOCK_USERS_DB: Dict[str, Dict[str, Any]] = {
-    "admin": {
-        "username": "admin",
-        "email": "admin@example.com",
-        "full_name": "Admin User",
-        "hashed_password": pwd_context.hash("testpassword"),
-        "disabled": False,
-        "role": "admin" # admin, auditor, user
-    },
-    "auditor": {
-        "username": "auditor",
-        "email": "auditor@example.com",
-        "full_name": "Auditor User",
-        "hashed_password": pwd_context.hash("testpassword"),
-        "disabled": False,
-        "role": "auditor"
-    },
-    "user1": {
-        "username": "user1",
-        "email": "user1@example.com",
-        "full_name": "Regular User One",
-        "hashed_password": pwd_context.hash("testpassword"),
-        "disabled": False,
-        "role": "user"
-    },
-    "user2": {
-        "username": "user2",
-        "email": "user2@example.com",
-        "full_name": "Regular User Two",
-        "hashed_password": pwd_context.hash("testpassword"),
-        "disabled": False,
-        "role": "user"
-    }
-}
+auth_router = APIRouter(
+    prefix="/api/v1/auth",
+    tags=["Authentication"]
+)
 
-# --- Pydantic Models ---
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
-class TokenData(BaseModel):
-    username: Optional[str] = None
-
-class User(BaseModel):
+# --- User Model (simplified) ---
+class User(BaseModel): # Inherit from BaseModel
     username: str
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
     full_name: Optional[str] = None
-    disabled: Optional[bool] = None
-    role: str # Added role
+    disabled: bool = False
+    role: str = "user"
 
 class UserInDB(User):
     hashed_password: str
 
-# --- Utility Functions ---
+# --- Helper Functions ---
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
+# --- Mock User Database ---
+MOCK_USERS_DB: Dict[str, UserInDB] = {}
+
+def initialize_mock_users():
+    users_to_create = {
+        "user1": {"password": "user1", "role": "user", "email": "user1@example.com", "full_name": "User One"},
+        "user2": {"password": "user2", "role": "user", "email": "user2@example.com", "full_name": "User Two"},
+        "admin": {"password": "admin", "role": "admin", "email": "admin@example.com", "full_name": "Admin User"},
+        "auditor": {"password": "auditor", "role": "auditor", "email": "auditor@example.com", "full_name": "Auditor User"}
+    }
+    for username, details in users_to_create.items():
+        hashed_password = get_password_hash(details["password"])
+        MOCK_USERS_DB[username] = UserInDB(
+            username=username, 
+            hashed_password=hashed_password, 
+            email=details["email"], 
+            full_name=details["full_name"], 
+            role=details["role"]
+        )
+    print("Mock users initialized with dynamically generated password hashes.")
+
+initialize_mock_users()
+
 def get_user(username: str) -> Optional[UserInDB]:
-    if username in MOCK_USERS_DB:
-        user_dict = MOCK_USERS_DB[username]
-        return UserInDB(**user_dict)
-    return None
+    return MOCK_USERS_DB.get(username)
+
+def authenticate_user(username: str, password: str) -> Optional[UserInDB]:
+    user = get_user(username)
+    if not user or not verify_password(password, user.hashed_password):
+        return None
+    if user.disabled:
+        return None
+    return user
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-# --- Dependency for getting current user ---
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -106,38 +92,28 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
+        username: Optional[str] = payload.get("sub")
         if username is None:
             raise credentials_exception
-        token_data = TokenData(username=username)
+        # Add role to token payload if needed, or fetch from user object
+        user_role: Optional[str] = payload.get("role") 
     except JWTError:
         raise credentials_exception
-    
-    user_data = get_user(username=token_data.username)
-    if user_data is None:
+    user_in_db = get_user(username)
+    if user_in_db is None:
         raise credentials_exception
-    return User(**user_data.model_dump()) # Return User model with role
+    return User(username=user_in_db.username, email=user_in_db.email, full_name=user_in_db.full_name, disabled=user_in_db.disabled, role=user_in_db.role)
 
 async def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
     if current_user.disabled:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")
     return current_user
 
-# --- Authentication Router (to be included in main.py) ---
-# This part would typically be in a separate router file (e.g., routers/auth.py)
-# For simplicity in this project structure, it can be defined here and imported or directly added to main app.
-
-from fastapi import APIRouter
-
-auth_router = APIRouter(
-    prefix="/api/v1/auth",
-    tags=["Authentication"]
-)
-
-@auth_router.post("/token", response_model=Token)
+# --- Authentication Endpoints ---
+@auth_router.post("/token", summary="Create access token for user")
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = get_user(form_data.username)
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    user = authenticate_user(form_data.username, form_data.password)
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -145,11 +121,11 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         )
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
+        data={"sub": user.username, "role": user.role}, expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
-@auth_router.get("/users/me", response_model=User)
+@auth_router.get("/users/me", response_model=User, summary="Get current authenticated user details")
 async def read_users_me(current_user: User = Depends(get_current_active_user)):
     return current_user
 

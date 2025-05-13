@@ -5,8 +5,8 @@ from typing import List, Optional
 # Assuming models.py is in the same directory
 from models import VipBase, VipCreate, VipUpdate 
 
-# MongoDB connection URL - assuming it's running on localhost for now, as per user's Docker Desktop setup
-MONGO_DETAILS = "mongodb://localhost:27017"
+# MongoDB connection URL - Use host.docker.internal for Docker Desktop
+MONGO_DETAILS = "mongodb://host.docker.internal:27017"
 DATABASE_NAME = "lbaas_db"
 VIP_COLLECTION_NAME = "vips" # Renamed to avoid conflict with function
 
@@ -18,6 +18,7 @@ vip_collection_global = database[VIP_COLLECTION_NAME] # Used by functions within
 # --- Functions to be imported by main.py for dependency injection ---
 async def get_database() -> motor.motor_asyncio.AsyncIOMotorClient:
     """Returns the MongoDB client instance."""
+    # This will use the globally defined client that connects to host.docker.internal
     return client
 
 def get_vips_collection(db_client: motor.motor_asyncio.AsyncIOMotorClient) -> motor.motor_asyncio.AsyncIOMotorCollection:
