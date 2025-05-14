@@ -1,0 +1,8 @@
+{
+    "vip_update_data": {
+        "primary_contact_email": "updated.user1@example.com",
+        "port": 8080
+    },
+    "servicenow_incident_id": "CHG0000002"
+}
+

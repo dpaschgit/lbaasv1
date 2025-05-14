@@ -11,7 +11,7 @@ from models import VipBase # For type hinting if needed
 # When running in Docker Compose, these might be service names, e.g., http://mock-tcpwave:8001
 # For local development before full Docker Compose, localhost is fine if ports are mapped.
 TCPWAVE_MOCK_URL = "http://localhost:8001"  # Updated: Base URL for the service
-SERVICENOW_MOCK_URL = "http://localhost:8002" # Updated: Base URL for the service
+SERVICENOW_MOCK_URL = "http://lbaas-mock-servicenow:8002" # Updated: Base URL for the service
 TRANSLATOR_BASE_URL = "http://localhost:8003/translate" # Example base URL for translator services (still a placeholder)
 
 # --- HTTP Client (reusable) ---

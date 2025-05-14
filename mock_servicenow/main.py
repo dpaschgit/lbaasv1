@@ -50,6 +50,8 @@ def seed_initial_data():
     incidents_to_seed = [
         {"number": "INC0010001", "short_description": "Router down in LADC", "state": IncidentState.IN_PROGRESS, "sys_updated_on": datetime.now(timezone.utc).isoformat()},
         {"number": "INC0012345", "short_description": "VIP Creation Request - myapp-prod", "state": IncidentState.CHANGE_APPROVED, "assigned_to": "network_team", "sys_updated_on": datetime.now(timezone.utc).isoformat()},
+        {"number": "INC0000001", "short_description": "VIP Creation - test-create-vip", "state": IncidentState.CHANGE_APPROVED, "assigned_to": "network_team", "sys_updated_on": datetime.now(timezone.utc).isoformat()},
+        {"number": "CHG0000002", "short_description": "VIP Update - test-create-vip port change", "state": IncidentState.CHANGE_APPROVED, "assigned_to": "network_team", "sys_updated_on": datetime.now(timezone.utc).isoformat()},
         {"number": "INC0066666", "short_description": "Urgent: Database server unresponsive", "state": IncidentState.IN_PROGRESS, "sys_updated_on": datetime.now(timezone.utc).isoformat()},
         {"number": "INC0077777", "short_description": "VIP Modification - security policy update", "state": IncidentState.CHANGE_REJECTED, "rejection_reason": "Proposed change conflicts with security policy XYZ.", "sys_updated_on": datetime.now(timezone.utc).isoformat()},
         {"number": "INC0088888", "short_description": "New Load Balancer for Project Phoenix", "state": IncidentState.AWAITING_CHANGE_APPROVAL, "sys_updated_on": datetime.now(timezone.utc).isoformat()}
@@ -180,6 +182,46 @@ async def update_ci(table_name: str, sys_id: str, payload: CIUpdatePayload):
     return {"sys_id": key_to_update, "details": mock_cmdb_cis[table_name][key_to_update]}
 
 # Enhanced Incident Validation Simulation
+@app.get("/api/servicenow_mock/validate_incident", response_model=IncidentValidationResponse, tags=["Incident"], summary="Validate a mock incident ticket number against a required state via GET")
+async def validate_incident_enhanced_get(
+    incident_number: str = Query(..., alias="number", example="INC0012345"), 
+    required_state: Optional[str] = Query(IncidentState.CHANGE_APPROVED, description="The state the incident must be in to be considered valid for the operation.")
+):
+    incident_data = mock_cmdb_cis[mock_incident_table].get(incident_number)
+
+    if not incident_data:
+        return IncidentValidationResponse(
+            valid=False, 
+            incident_number=incident_number, 
+            message=f"Incident '{incident_number}' not found."
+        )
+
+    actual_state = incident_data.get("state")
+    incident_sys_id = incident_data.get("sys_id")
+
+    if actual_state == required_state:
+        return IncidentValidationResponse(
+            valid=True, 
+            incident_number=incident_number, 
+            incident_sys_id=incident_sys_id,
+            actual_state=actual_state,
+            message=f"Incident '{incident_number}' is valid and in the required state: '{required_state}'."
+        )
+    else:
+        rejection_reason = incident_data.get("rejection_reason", f"Incident is in state '{actual_state}', but required state is '{required_state}'.")
+        if actual_state == IncidentState.CHANGE_REJECTED and "rejection_reason" in incident_data:
+             message = f"Incident '{incident_number}' was rejected. Reason: {incident_data['rejection_reason']}"
+        else:
+            message = f"Incident '{incident_number}' is in state '{actual_state}'. Required state for operation is '{required_state}'."
+        return IncidentValidationResponse(
+            valid=False, 
+            incident_number=incident_number, 
+            incident_sys_id=incident_sys_id,
+            actual_state=actual_state,
+            message=message
+        )
+
+
 @app.post("/api/servicenow_mock/validate_incident", response_model=IncidentValidationResponse, tags=["Incident"], summary="Validate a mock incident ticket number against a required state")
 async def validate_incident_enhanced(request: IncidentValidationRequest):
     incident_number = request.incident_number

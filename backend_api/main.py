@@ -2,9 +2,10 @@ from fastapi import FastAPI, HTTPException, Depends, status, Body
 from typing import List, Dict, Optional, Any
 # from uuid import uuid4 # Not used for MongoDB _id
 import motor.motor_asyncio
+from pymongo import ReturnDocument # Added this import
 from datetime import datetime, timezone
 
-from models import VipBase, VipCreate, VipDB, VipUpdate, PoolMember, Monitor, Persistence, PyObjectId
+from models import VipBase, VipCreate, VipDB, VipUpdate, PoolMember, Monitor, Persistence, PyObjectId, VipDeletePayload
 from auth import get_current_active_user, User, auth_router
 from integrations import (
     call_tcpwave_ipam_mock,
@@ -151,7 +152,7 @@ async def update_vip(
     updated_vip_doc = await vips_collection.find_one_and_update(
         {"_id": obj_id},
         {"$set": update_data},
-        return_document=motor.motor_asyncio.ReturnDocument.AFTER
+        return_document=ReturnDocument.AFTER
     )
 
     if not updated_vip_doc:
@@ -162,13 +163,15 @@ async def update_vip(
 @app.delete("/api/v1/vips/{vip_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["VIPs"], summary="Delete a VIP")
 async def delete_vip(
     vip_id: str, 
+    payload: VipDeletePayload, # Changed to use Pydantic model for body
     current_user: User = Depends(get_current_active_user),
-    db_client: motor.motor_asyncio.AsyncIOMotorClient = Depends(get_database),
-    servicenow_incident_id: Optional[str] = Body(None, description="ServiceNow Incident ID for change validation")
+    db_client: motor.motor_asyncio.AsyncIOMotorClient = Depends(get_database)
 ):
     if current_user.role == "auditor":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Auditors cannot delete VIPs.")
 
+    # Extract servicenow_incident_id from the payload model
+    servicenow_incident_id = payload.servicenow_incident_id
     await validate_incident_for_modification(servicenow_incident_id, "delete")
 
     await check_ownership_or_admin(vip_id, current_user, db_client) 

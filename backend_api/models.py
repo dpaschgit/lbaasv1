@@ -101,3 +101,8 @@ class VipDB(VipBase):
 # as main.py uses VipDB for response_model in GET operations.
 # If a different response structure is needed, it can be added back as VipResponse.
 
+
+
+
+class VipDeletePayload(BaseModel):
+    servicenow_incident_id: str = Field(..., description="ServiceNow Incident ID for change validation during delete operation.")
