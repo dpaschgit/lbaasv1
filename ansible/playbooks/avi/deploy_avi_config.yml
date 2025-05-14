@@ -1,0 +1,33 @@
+---
+- name: Deploy AVI Configuration (Mock)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    avi_config_payload: "{}" # Default to an empty JSON object
+    output_log_path: "/tmp/avi_config_deployment_log.txt"
+
+  tasks:
+    - name: Validate AVI Config Payload (Basic Check)
+      ansible.builtin.assert:
+        that:
+          - avi_config_payload | from_json # Check if it's valid JSON
+        fail_msg: "Provided avi_config_payload is not valid JSON."
+        success_msg: "AVI config payload is valid."
+
+    - name: Log AVI Config Payload to a file (Simulating Deployment)
+      ansible.builtin.copy:
+        content: "{{ avi_config_payload | to_nice_json }}"
+        dest: "{{ output_log_path }}"
+      notify: Display AVI deployment log path
+
+    - name: Display AVI Config Payload (Debug)
+      ansible.builtin.debug:
+        msg: "Simulating deployment of AVI Config: {{ avi_config_payload | to_nice_json }}"
+
+  handlers:
+    - name: Display AVI deployment log path
+      ansible.builtin.debug:
+        msg: "Mock AVI configuration deployment logged to: {{ output_log_path }}"
+

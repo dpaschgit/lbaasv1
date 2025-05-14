@@ -1,0 +1,57 @@
+---
+- name: Deploy Nginx Configuration (Mock)
+  hosts: localhost # In a real scenario, this would be your Nginx servers group
+  connection: local # For mock, local is fine. For real, likely ssh.
+  gather_facts: false
+
+  vars:
+    nginx_config_src_path: "/tmp/nginx_generated_config.conf" # Path to the generated Nginx config file
+    mock_nginx_conf_dir: "/tmp/mock_nginx_conf/sites-available"
+    mock_nginx_conf_file_name: "generated_vip.conf"
+    output_log_path: "/tmp/nginx_deployment_log.txt"
+
+  tasks:
+    - name: Ensure mock Nginx config directory exists
+      ansible.builtin.file:
+        path: "{{ mock_nginx_conf_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Check if source Nginx config file exists
+      ansible.builtin.stat:
+        path: "{{ nginx_config_src_path }}"
+      register: nginx_config_file_stat
+
+    - name: Fail if source Nginx config file does not exist
+      ansible.builtin.fail:
+        msg: "Source Nginx configuration file not found at {{ nginx_config_src_path }}"
+      when: not nginx_config_file_stat.stat.exists
+
+    - name: Copy Nginx configuration to mock directory
+      ansible.builtin.copy:
+        src: "{{ nginx_config_src_path }}"
+        dest: "{{ mock_nginx_conf_dir }}/{{ mock_nginx_conf_file_name }}"
+        mode: '0644'
+      notify: Log Nginx config deployment
+
+    - name: Simulate Nginx reload (Log action)
+      ansible.builtin.lineinfile:
+        path: "{{ output_log_path }}"
+        line: "[INFO] {{ ansible_date_time.iso8601 }} - Simulated Nginx reload due to new configuration: {{ mock_nginx_conf_dir }}/{{ mock_nginx_conf_file_name }}"
+        create: yes
+        mode: '0644'
+      notify: Display Nginx deployment log path
+
+    - name: Display Nginx deployment info (Debug)
+      ansible.builtin.debug:
+        msg: "Simulated deployment of Nginx config from {{ nginx_config_src_path }} to {{ mock_nginx_conf_dir }}/{{ mock_nginx_conf_file_name }}. Reload simulated."
+
+  handlers:
+    - name: Log Nginx config deployment
+      ansible.builtin.debug:
+        msg: "Mock Nginx configuration deployed to: {{ mock_nginx_conf_dir }}/{{ mock_nginx_conf_file_name }}"
+
+    - name: Display Nginx deployment log path
+      ansible.builtin.debug:
+        msg: "Mock Nginx deployment and reload actions logged to: {{ output_log_path }}"
+

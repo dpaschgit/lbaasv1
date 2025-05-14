@@ -24,7 +24,5 @@ EXPOSE 8000
 # Command to run the application
 # The backend_api/main.py uses app.on_event("startup") for MongoDB connection.
 # Ensure MONGODB_URL environment variable is set in docker-compose.yml to point to the mongo service.
-#CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
-#CMD ["tail", "-f", "/dev/null"]
-CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 

@@ -1,12 +1,13 @@
 fastapi
 uvicorn[standard]
-pydantic[email]
-motor
-passlib[bcrypt]  # Ensures bcrypt extras are installed with passlib
-python-multipart # For FastAPI form data (OAuth2PasswordRequestForm)
-python-jose[cryptography] # For JWT tokens
+pymongo
+passlib[bcrypt]
+python-jose[cryptography]
+python-multipart
 httpx
 bcrypt==3.2.0
-# For Ansible integration (to be added later if direct execution is needed)
-# ansible-runner
+motor
+
+
+email-validator
 

@@ -1,6 +1,6 @@
 # Load Balancer Self-Service Platform
 
-This project provides a modular, containerized mock Load Balancer as a Service (LBaaS) platform. It includes a Backstage UI scaffold, a Python FastAPI backend API, mock services for TCPwave IPAM and ServiceNow CMDB/Ticketing, and translator modules for F5 (AS3), AVI, and NGINX load balancers.
+This project provides a modular, containerized mock Load Balancer as a Service (LBaaS) platform. It includes a Backstage UI scaffold, a Python FastAPI backend API, mock services for TCPwave IPAM and ServiceNow CMDB/Ticketing, and translator modules for F5 (AS3), AVI, and Nginx load balancers.
 
 ## Project Structure
 

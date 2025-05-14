@@ -1,0 +1,2 @@
+export { VipCreatePage } from "./VipCreatePage";
+

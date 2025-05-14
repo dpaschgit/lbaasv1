@@ -100,3 +100,4 @@ class VipDB(VipBase):
 # The previous VipResponse definition is removed to avoid confusion with VipDB, 
 # as main.py uses VipDB for response_model in GET operations.
 # If a different response structure is needed, it can be added back as VipResponse.
+

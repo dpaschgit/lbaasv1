@@ -31,7 +31,7 @@ Unit tests will focus on individual functions and classes within each service. W
     *   Helper functions for integrations.
 *   **Mock Services (TCPwave, ServiceNow)**:
     *   Endpoint request/response handling.
-    *   In-memory data manipulation logic (e.g., IP allocation, CI creation).
+    *   In-memory data manipulation logic (e.g., IP allocation, CI creation, incident state management).
 *   **Translator Services (F5, AVI, Nginx)**:
     *   Input data model validation.
     *   Core configuration generation logic for various VIP parameters.
@@ -42,8 +42,8 @@ Unit tests will focus on individual functions and classes within each service. W
 Integration tests will verify the interactions between different services:
 
 *   **Backend API <-> MongoDB**: Test database connectivity, data creation, retrieval, update, and deletion.
-*   **Backend API <-> Mock TCPwave**: Test IP request/release, FQDN update, and DNS resolution calls.
-*   **Backend API <-> Mock ServiceNow**: Test CMDB CI creation/query and incident validation calls.
+*   **Backend API <-> Mock TCPwave**: Test IP request/release, FQDN update, and DNS resolution calls, considering the IP pool.
+*   **Backend API <-> Mock ServiceNow**: Test CMDB CI creation/query and incident validation calls, including checks for specific incident states like "Approved for Change".
 *   **Backend API <-> Translator Services**: Test calls from the backend API to each translator service, ensuring correct data passing and reception of generated configurations.
 
 ### 3.3. End-to-End (E2E) Tests
@@ -56,7 +56,7 @@ Key E2E scenarios include:
 2.  **VIP Creation (Happy Path)**:
     *   Admin creates a Prod LADC VIP (should trigger AVI translator).
     *   `user1` creates a DEV NYDC VIP using their owned servers (should trigger Nginx translator).
-    *   Verify IPAM interaction (mock TCPwave).
+    *   Verify IPAM interaction (mock TCPwave - IP assigned from pool).
     *   Verify CMDB CI creation (mock ServiceNow).
     *   Verify correct translator is called and configuration is generated.
 3.  **VIP Listing & Retrieval**:
@@ -65,18 +65,22 @@ Key E2E scenarios include:
     *   Auditor lists all VIPs.
     *   Retrieve specific VIP details by ID for different roles.
 4.  **VIP Modification**:
-    *   `user1` modifies their own VIP (e.g., adds a pool member) after providing a valid mock ServiceNow incident ID.
+    *   `user1` modifies their own VIP (e.g., adds a pool member) after providing a valid mock ServiceNow incident ID (e.g., one in "Approved for Change" state).
     *   Verify CMDB update and translator call for update.
 5.  **VIP Deletion**:
-    *   `user1` deletes their own VIP after providing a valid mock ServiceNow incident ID.
+    *   `user1` deletes their own VIP after providing a valid mock ServiceNow incident ID (e.g., one in "Approved for Change" state).
     *   Verify CMDB update/flagging and translator call for deletion.
+    *   Verify IP address is released back to the IPAM pool in mock TCPwave.
 6.  **Entitlement Checks**:
     *   `user1` attempts to modify/delete a VIP owned by `user2` (should be forbidden).
     *   `user1` attempts to create a VIP using servers not owned by them (should be forbidden - requires full implementation of server ownership check in API).
     *   Auditor attempts to create/modify/delete a VIP (should be forbidden).
-    *   Attempt VIP modification/deletion without a valid ServiceNow incident ID (should fail).
-    *   Attempt VIP modification/deletion with an invalid ServiceNow incident ID (should fail).
+    *   Attempt VIP modification/deletion without a ServiceNow incident ID (should fail).
+    *   Attempt VIP modification/deletion with an invalid ServiceNow incident ID (e.g., one not in "Approved for Change" state or non-existent - should fail).
 7.  **Translator Output Verification**: For selected VIP creation/modification scenarios, manually inspect the generated configuration from each translator to ensure it reflects the input parameters and adheres to vendor-specific formats and requirements (including L4/L7, persistence, monitoring).
+8.  **IPAM Edge Cases (Mock TCPwave)**:
+    *   Attempt to request an IP when the pool is exhausted (should fail gracefully).
+    *   Attempt to release an IP that was not allocated or already released.
 
 ## 4. Test Environment Setup
 
@@ -91,10 +95,10 @@ Services will be accessible on their mapped ports (e.g., Backend API on `localho
 
 ## 5. Test Data
 
-*   **User Credentials**: Defined in `backend_api/auth.py` (admin, auditor, user1, user2; password: "testpassword").
-*   **MongoDB Seed Data**: Populated by `backend_api/seed_mongo.py` (sample VIPs with different owners and configurations).
-*   **Mock ServiceNow Seed Data**: Servers for `user1` and `user2` are seeded in `mock_servicenow/main.py`. Mock incident IDs `123456` (valid) and `666666` (invalid) are hardcoded for validation.
-*   **Mock TCPwave Seed Data**: Default subnet and IP ranges are defined in `mock_tcpwave/main.py`.
+*   **User Credentials**: Defined in `backend_api/auth.py` (admin, auditor, user1, user2; password is the same as the username, e.g., `user1`/`user1`).
+*   **MongoDB Seed Data**: Populated by `backend_api/seed_mongo.py` (sample VIPs with different owners and configurations, sample servers).
+*   **Mock ServiceNow Seed Data**: Servers for `user1` and `user2` are seeded in `mock_servicenow/main.py`. Mock incident IDs (e.g., `INC0000001` for "New", `CHG0000001` for "Approved for Change", `INC0000002` for "Closed") are defined for validation.
+*   **Mock TCPwave Seed Data**: Default subnet and IP ranges are defined in `mock_tcpwave/main.py`, with an initial pool of available IPs.
 
 ## 6. Test Cases (High-Level Summary)
 

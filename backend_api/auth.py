@@ -29,6 +29,7 @@ class User(BaseModel): # Inherit from BaseModel
     full_name: Optional[str] = None
     disabled: bool = False
     role: str = "user"
+    app_ids: Optional[List[str]] = None
 
 class UserInDB(User):
     hashed_password: str
@@ -90,6 +91,13 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    # Static mapping for app_ids based on username for mock purposes
+    USER_APP_IDS_MAPPING = {
+        "user1": ["APP001", "SHARED01"],
+        "user2": ["APP002"],
+        "admin": ["APP001", "APP002", "APP003", "SHARED01"],
+        "auditor": [] # Auditors might not own apps but can see all
+    }
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: Optional[str] = payload.get("sub")
@@ -102,8 +110,17 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     user_in_db = get_user(username)
     if user_in_db is None:
         raise credentials_exception
-    return User(username=user_in_db.username, email=user_in_db.email, full_name=user_in_db.full_name, disabled=user_in_db.disabled, role=user_in_db.role)
+    
+    user_app_ids = USER_APP_IDS_MAPPING.get(username, []) # Get app_ids or default to empty list
 
+    return User(
+        username=user_in_db.username, 
+        email=user_in_db.email, 
+        full_name=user_in_db.full_name, 
+        disabled=user_in_db.disabled, 
+        role=user_in_db.role,
+        app_ids=user_app_ids
+    )
 async def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
     if current_user.disabled:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")

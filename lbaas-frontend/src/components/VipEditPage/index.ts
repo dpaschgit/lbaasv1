@@ -1,0 +1,2 @@
+export { VipEditPage } from "./VipEditPage";
+
