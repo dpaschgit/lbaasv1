@@ -1,0 +1,29 @@
+app:
+  title: LBaaS Portal
+  baseUrl: http://localhost:3000
+
+backend:
+  baseUrl: http://localhost:8000
+  listen:
+    port: 8000
+
+techdocs:
+  builder: 'local'
+  generator:
+    runIn: 'docker'
+  publisher:
+    type: 'local'
+
+auth:
+  environment: development
+  providers:
+    guest: {}
+
+proxy:
+  '/lbaas':
+    target: 'http://localhost:8000/api/v1'
+    changeOrigin: true
+    secure: false
+    headers:
+      Cookie: '' # Disable cookie forwarding if not needed
+

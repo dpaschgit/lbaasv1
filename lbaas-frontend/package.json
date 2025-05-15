@@ -5,6 +5,9 @@
   "types": "src/index.ts",
   "license": "Apache-2.0",
   "private": true,
+  "backstage": {
+    "role": "frontend-plugin"
+  },
   "scripts": {
     "start": "backstage-cli package start",
     "build": "backstage-cli package build",
@@ -21,8 +24,10 @@
     "@material-ui/core": "^4.12.2",
     "@material-ui/icons": "^4.9.1",
     "@material-ui/lab": "4.0.0-alpha.61",
-    "react-use": "^17.2.4",
-    "react-router-dom": "6.11.2"
+    "react": "17.0.0",
+    "react-dom": "17.0.0",
+    "react-router-dom": "6.11.2",
+    "react-use": "^17.2.4"
   },
   "devDependencies": {
     "@backstage/cli": "^0.22.0",
@@ -34,11 +39,8 @@
     "cross-fetch": "^3.1.5",
     "msw": "^1.0.0"
   },
-  "peerDependencies": {
-    "react": "^17.0.0 || ^18.0.0"
-  },
+  "peerDependencies": {},
   "files": [
     "dist"
   ]
 }
-
