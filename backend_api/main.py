@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Depends, status, Body
+from fastapi.middleware.cors import CORSMiddleware # Added for CORS
 from typing import List, Dict, Optional, Any
 # from uuid import uuid4 # Not used for MongoDB _id
 import motor.motor_asyncio
@@ -20,6 +21,22 @@ app = FastAPI(
     title="Load Balancer Self-Service API",
     description="Manages Load Balancer VIP configurations, integrates with IPAM, CMDB, and Translators.",
     version="0.1.0"
+)
+
+# CORS Middleware Configuration
+origins = [
+    "http://localhost",         # Allow requests from localhost (any port, less secure but common for dev)
+    "http://localhost:3000",    # Common port for React/Vue/Angular dev servers
+    "http://localhost:7007",    # Common port for Backstage frontend dev server
+    # Add any other specific origins your UI might run on
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True, # Allow cookies and authorization headers
+    allow_methods=["*"],    # Allow all methods (GET, POST, PUT, DELETE, etc.)
+    allow_headers=["*"],    # Allow all headers
 )
 
 app.include_router(auth_router)
