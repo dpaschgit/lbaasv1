@@ -1,6 +1,5 @@
 import React, { useEffect, useState, FormEvent } from 'react';
 import { Typography, Grid, Button, CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, IconButton, Tooltip, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, TextField } from '@material-ui/core';
-import { Link as RouterLink } from 'react-router-dom';
 import { AddCircleOutline, Edit, Delete, Visibility } from '@material-ui/icons';
 import {
   InfoCard,
@@ -8,19 +7,15 @@ import {
   Page,
   Content,
   ContentHeader,
-  HeaderLabel,
   SupportButton,
-  TableProps,
   StatusOK,
   StatusError,
-  StatusWarning,
   StatusPending,
   StatusAborted,
   StatusRunning
 } from '@backstage/core-components';
-import { useApi, alertApiRef, useRouteRef } from '@backstage/core-plugin-api';
+import { useApi, alertApiRef } from '@backstage/core-plugin-api';
 import { lbaasFrontendApiRef, Vip, AuthToken } from '../../api';
-import { rootRouteRef, vipCreateRouteRef, vipViewRouteRef, vipEditRouteRef } from '../../routes';
 
 const getStatusComponent = (status: string) => {
   switch (status?.toLowerCase()) {
@@ -43,23 +38,68 @@ export const VipListPage = () => {
   const alertApi = useApi(alertApiRef);
   const lbaasApi = useApi(lbaasFrontendApiRef);
   
-  // Use route refs for navigation
-  const rootRoute = useRouteRef(rootRouteRef);
-  const createVipRoute = useRouteRef(vipCreateRouteRef);
-  const viewVipRoute = useRouteRef(vipViewRouteRef);
-  const editVipRoute = useRouteRef(vipEditRouteRef);
-  
   const [vips, setVips] = useState<Vip[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
   const [selectedVipId, setSelectedVipId] = useState<string | null>(null);
   const [incidentId, setIncidentId] = useState('');
+  const [incidentIdError, setIncidentIdError] = useState('');
   const [token, setToken] = useState<string>('');
   const [loginOpen, setLoginOpen] = useState(true);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
+
+  // Navigation functions using window.location for maximum compatibility
+  const navigateToView = (vipId: string) => {
+    try {
+      // Get the current base URL up to /lbaas-frontend
+      const currentUrl = window.location.href;
+      const baseUrl = currentUrl.split('/lbaas-frontend')[0];
+      const viewUrl = `${baseUrl}/lbaas-frontend/${vipId}/view`;
+      console.log(`Navigating to view: ${viewUrl}`);
+      window.location.href = viewUrl;
+    } catch (error) {
+      console.error('Navigation error:', error);
+      alertApi.post({ 
+        message: `Error navigating to VIP details: ${error}`, 
+        severity: 'error' 
+      });
+    }
+  };
+
+  const navigateToEdit = (vipId: string) => {
+    try {
+      const currentUrl = window.location.href;
+      const baseUrl = currentUrl.split('/lbaas-frontend')[0];
+      const editUrl = `${baseUrl}/lbaas-frontend/${vipId}/edit`;
+      console.log(`Navigating to edit: ${editUrl}`);
+      window.location.href = editUrl;
+    } catch (error) {
+      console.error('Navigation error:', error);
+      alertApi.post({ 
+        message: `Error navigating to edit VIP: ${error}`, 
+        severity: 'error' 
+      });
+    }
+  };
+
+  const navigateToCreate = () => {
+    try {
+      const currentUrl = window.location.href;
+      const baseUrl = currentUrl.split('/lbaas-frontend')[0];
+      const createUrl = `${baseUrl}/lbaas-frontend/create`;
+      console.log(`Navigating to create: ${createUrl}`);
+      window.location.href = createUrl;
+    } catch (error) {
+      console.error('Navigation error:', error);
+      alertApi.post({ 
+        message: `Error navigating to create VIP: ${error}`, 
+        severity: 'error' 
+      });
+    }
+  };
 
   const handleLogin = async () => {
     if (!username || !password) {
@@ -110,19 +150,40 @@ export const VipListPage = () => {
   const handleDeleteClick = (vipId: string) => {
     setSelectedVipId(vipId);
     setOpenDeleteDialog(true);
+    setIncidentId('');
+    setIncidentIdError('');
   };
 
   const handleCloseDeleteDialog = () => {
     setOpenDeleteDialog(false);
     setSelectedVipId(null);
     setIncidentId('');
+    setIncidentIdError('');
+  };
+
+  const validateIncidentId = (id: string) => {
+    // Accept any non-empty string for now
+    if (!id.trim()) {
+      setIncidentIdError('ServiceNow Incident ID is required');
+      return false;
+    }
+    setIncidentIdError('');
+    return true;
+  };
+
+  const handleIncidentIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setIncidentId(value);
+    if (value.trim()) {
+      setIncidentIdError('');
+    }
   };
 
   const handleConfirmDelete = async () => {
-    if (!selectedVipId || !incidentId || !token) {
-      alertApi.post({ message: 'Incident ID is required for deletion.', severity: 'error' });
+    if (!selectedVipId || !validateIncidentId(incidentId) || !token) {
       return;
     }
+    
     try {
       // Use the API client to delete the VIP
       const result = await lbaasApi.deleteVip(selectedVipId, incidentId, token);
@@ -137,34 +198,6 @@ export const VipListPage = () => {
       alertApi.post({ message: `Error deleting VIP: ${e.message}`, severity: 'error' });
     }
     handleCloseDeleteDialog();
-  };
-
-  // Helper functions for navigation
-  const getViewVipUrl = (vipId: string) => {
-    try {
-      return viewVipRoute({ vipId });
-    } catch (error) {
-      console.error('Error generating view VIP URL:', error);
-      return `/lbaas-frontend/${vipId}/view`;
-    }
-  };
-
-  const getEditVipUrl = (vipId: string) => {
-    try {
-      return editVipRoute({ vipId });
-    } catch (error) {
-      console.error('Error generating edit VIP URL:', error);
-      return `/lbaas-frontend/${vipId}/edit`;
-    }
-  };
-
-  const getCreateVipUrl = () => {
-    try {
-      return createVipRoute();
-    } catch (error) {
-      console.error('Error generating create VIP URL:', error);
-      return '/lbaas-frontend/create';
-    }
   };
 
   if (loginOpen) {
@@ -271,53 +304,15 @@ export const VipListPage = () => {
     );
   }
 
-  const columns: TableProps<Vip>['columns'] = [
-    { title: 'FQDN', field: 'vip_fqdn' },
-    { title: 'IP Address', field: 'vip_ip' },
-    { title: 'Port', field: 'port', type: 'numeric' },
-    { title: 'Protocol', field: 'protocol' },
-    { title: 'Environment', field: 'environment' },
-    { title: 'Datacenter', field: 'datacenter' },
-    { title: 'App ID', field: 'app_id' },
-    { title: 'Owner', field: 'owner' },
-    { title: 'Status', field: 'status', render: rowData => getStatusComponent(rowData.status || '') },
-    {
-      title: 'Actions',
-      render: (rowData: Vip) => (
-        <>
-          <Tooltip title="View Details">
-            <IconButton component={RouterLink} to={getViewVipUrl(rowData.id)}>
-              <Visibility />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="Modify VIP">
-            <IconButton component={RouterLink} to={getEditVipUrl(rowData.id)}>
-              <Edit />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="Delete VIP">
-            <IconButton onClick={() => handleDeleteClick(rowData.id)}>
-              <Delete />
-            </IconButton>
-          </Tooltip>
-        </>
-      ),
-    },
-  ];
-
   return (
     <Page themeId="tool">
-      <Header title="Load Balancer VIPs" subtitle="Manage your Load Balancer Virtual IP Addresses">
-        {/* <HeaderLabel label="Owner" value="Dynamic Owner" /> */}
-        {/* <HeaderLabel label="Lifecycle" value="Alpha" /> */}
-      </Header>
+      <Header title="Load Balancer VIPs" subtitle="Manage your Load Balancer Virtual IP Addresses" />
       <Content>
         <ContentHeader title="VIP List">
           <Button
             variant="contained"
             color="primary"
-            component={RouterLink}
-            to={getCreateVipUrl()}
+            onClick={navigateToCreate}
             startIcon={<AddCircleOutline />}
           >
             Create New VIP
@@ -330,15 +325,22 @@ export const VipListPage = () => {
               <Table>
                 <TableHead>
                   <TableRow>
-                    {columns.map((col, index) => (
-                      <TableCell key={index}>{col.title}</TableCell>
-                    ))}
+                    <TableCell>FQDN</TableCell>
+                    <TableCell>IP Address</TableCell>
+                    <TableCell>Port</TableCell>
+                    <TableCell>Protocol</TableCell>
+                    <TableCell>Environment</TableCell>
+                    <TableCell>Datacenter</TableCell>
+                    <TableCell>App ID</TableCell>
+                    <TableCell>Owner</TableCell>
+                    <TableCell>Status</TableCell>
+                    <TableCell>Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {vips.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={columns.length} align="center">
+                      <TableCell colSpan={10} align="center">
                         No VIPs found.
                       </TableCell>
                     </TableRow>
@@ -356,12 +358,12 @@ export const VipListPage = () => {
                         <TableCell>{getStatusComponent(row.status || '')}</TableCell>
                         <TableCell>
                           <Tooltip title="View Details">
-                            <IconButton component={RouterLink} to={getViewVipUrl(row.id)}>
+                            <IconButton onClick={() => navigateToView(row.id)}>
                               <Visibility />
                             </IconButton>
                           </Tooltip>
                           <Tooltip title="Modify VIP">
-                            <IconButton component={RouterLink} to={getEditVipUrl(row.id)}>
+                            <IconButton onClick={() => navigateToEdit(row.id)}>
                               <Edit />
                             </IconButton>
                           </Tooltip>
@@ -398,12 +400,18 @@ export const VipListPage = () => {
             fullWidth
             variant="standard"
             value={incidentId}
-            onChange={(e) => setIncidentId(e.target.value)}
+            onChange={handleIncidentIdChange}
+            error={!!incidentIdError}
+            helperText={incidentIdError || "Example formats: CHG0012345, INC0054321, or any valid ServiceNow ID"}
           />
         </DialogContent>
         <DialogActions>
           <Button onClick={handleCloseDeleteDialog}>Cancel</Button>
-          <Button onClick={handleConfirmDelete} color="secondary" disabled={!incidentId.trim()}>
+          <Button 
+            onClick={handleConfirmDelete} 
+            color="secondary" 
+            disabled={!incidentId.trim()}
+          >
             Delete
           </Button>
         </DialogActions>
