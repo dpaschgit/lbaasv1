@@ -1,4 +1,4 @@
-import React, { useEffect, useState, FormEvent } from 'react';
+import React, { useState, FormEvent } from 'react';
 import { Typography, Grid, Button, CircularProgress, TextField, MenuItem, Paper } from '@material-ui/core';
 import { ArrowBack, Save } from '@material-ui/icons';
 import {
@@ -20,9 +20,7 @@ export const VipCreatePage = () => {
   const lbaasApi = useApi(lbaasFrontendApiRef);
   
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const [loginOpen, setLoginOpen] = useState(false);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   
   // Form fields
@@ -33,23 +31,13 @@ export const VipCreatePage = () => {
   const [environment, setEnvironment] = useState('production');
   const [datacenter, setDatacenter] = useState('dc1');
   const [appId, setAppId] = useState('');
-  const [owner, setOwner] = useState('');
-  const [status, setStatus] = useState('pending');
-
-  useEffect(() => {
-    // Check for authentication token
-    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
-    if (!token) {
-      setLoginOpen(true);
-      alertApi.post({ message: 'Authentication required. Please login.', severity: 'warning' });
-    }
-  }, []);
+  const [poolMembers, setPoolMembers] = useState([
+    { server_name: '', server_ip: '', server_port: '', weight: '1', status: 'active' }
+  ]);
 
   const navigateToMainPage = () => {
     try {
-      const currentUrl = window.location.href;
-      const baseUrl = currentUrl.split('/lbaas-frontend')[0];
-      window.location.href = `${baseUrl}/lbaas-frontend`;
+      window.location.href = '/lbaas-frontend';
     } catch (error) {
       console.error('Navigation error:', error);
     }
@@ -95,12 +83,69 @@ export const VipCreatePage = () => {
       errors.appId = 'App ID is required';
     }
     
-    if (!owner) {
-      errors.owner = 'Owner is required';
+    // Validate pool members
+    const poolMemberErrors: Record<string, Record<string, string>> = {};
+    let hasPoolMemberErrors = false;
+    
+    poolMembers.forEach((member, index) => {
+      const memberErrors: Record<string, string> = {};
+      
+      if (!member.server_name) {
+        memberErrors.server_name = 'Server name is required';
+        hasPoolMemberErrors = true;
+      }
+      
+      if (!member.server_ip) {
+        memberErrors.server_ip = 'Server IP is required';
+        hasPoolMemberErrors = true;
+      } else if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(member.server_ip)) {
+        memberErrors.server_ip = 'Invalid IP Address format';
+        hasPoolMemberErrors = true;
+      }
+      
+      if (!member.server_port) {
+        memberErrors.server_port = 'Server port is required';
+        hasPoolMemberErrors = true;
+      } else {
+        const portNum = parseInt(member.server_port, 10);
+        if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+          memberErrors.server_port = 'Port must be between 1 and 65535';
+          hasPoolMemberErrors = true;
+        }
+      }
+      
+      if (Object.keys(memberErrors).length > 0) {
+        poolMemberErrors[index] = memberErrors;
+      }
+    });
+    
+    if (hasPoolMemberErrors) {
+      errors.poolMembers = JSON.stringify(poolMemberErrors);
     }
     
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
+  };
+
+  const handleAddPoolMember = () => {
+    setPoolMembers([
+      ...poolMembers,
+      { server_name: '', server_ip: '', server_port: '', weight: '1', status: 'active' }
+    ]);
+  };
+
+  const handleRemovePoolMember = (index: number) => {
+    if (poolMembers.length > 1) {
+      const updatedMembers = [...poolMembers];
+      updatedMembers.splice(index, 1);
+      setPoolMembers(updatedMembers);
+    }
+  };
+
+  const handlePoolMemberChange = (index: number, field: string, value: string) => {
+    const updatedMembers = [...poolMembers];
+    updatedMembers[index] = { ...updatedMembers[index], [field]: value };
+    setPoolMembers(updatedMembers);
   };
 
   const handleSubmit = async (e: FormEvent) => {
@@ -112,17 +157,16 @@ export const VipCreatePage = () => {
     }
     
     try {
-      setSaving(true);
+      setLoading(true);
       
       // Get token from localStorage
       const token = localStorage.getItem(TOKEN_STORAGE_KEY);
       if (!token) {
-        setLoginOpen(true);
         throw new Error('Authentication required. Please login.');
       }
       
       // Prepare VIP data
-      const newVip: Partial<Vip> = {
+      const vipData: Partial<Vip> = {
         vip_fqdn: vipFqdn,
         vip_ip: vipIp,
         port: parseInt(port, 10),
@@ -130,12 +174,17 @@ export const VipCreatePage = () => {
         environment,
         datacenter,
         app_id: appId,
-        owner,
-        status,
+        pool_members: poolMembers.map(member => ({
+          server_name: member.server_name,
+          server_ip: member.server_ip,
+          server_port: parseInt(member.server_port, 10),
+          weight: parseInt(member.weight, 10),
+          status: member.status
+        }))
       };
       
       // Create VIP
-      await lbaasApi.createVip(newVip, token);
+      await lbaasApi.createVip(vipData, token);
       
       alertApi.post({ message: 'VIP created successfully', severity: 'success' });
       
@@ -143,6 +192,7 @@ export const VipCreatePage = () => {
       navigateToMainPage();
     } catch (e: any) {
       console.error('Error creating VIP:', e);
+      setError(e);
       alertApi.post({ message: `Error: ${e.message}`, severity: 'error' });
       
       // If authentication error, redirect to main page for login
@@ -150,34 +200,21 @@ export const VipCreatePage = () => {
         navigateToMainPage();
       }
     } finally {
-      setSaving(false);
+      setLoading(false);
     }
   };
 
-  if (loginOpen) {
-    return (
-      <Page themeId="tool">
-        <Header title="Create VIP" subtitle="Create a New Load Balancer VIP" />
-        <Content>
-          <Grid container spacing={3} justifyContent="center">
-            <Grid item xs={12} sm={8} md={6} lg={4}>
-              <InfoCard title="Authentication Required">
-                <Typography>You need to login to create a VIP.</Typography>
-                <Button 
-                  variant="contained" 
-                  color="primary" 
-                  onClick={navigateToMainPage}
-                  style={{ marginTop: 16 }}
-                >
-                  Go to Login
-                </Button>
-              </InfoCard>
-            </Grid>
-          </Grid>
-        </Content>
-      </Page>
-    );
-  }
+  // Parse pool member errors if they exist
+  const getPoolMemberError = (index: number, field: string) => {
+    if (!formErrors.poolMembers) return '';
+    
+    try {
+      const poolMemberErrors = JSON.parse(formErrors.poolMembers);
+      return poolMemberErrors[index]?.[field] || '';
+    } catch (e) {
+      return '';
+    }
+  };
 
   return (
     <Page themeId="tool">
@@ -192,7 +229,7 @@ export const VipCreatePage = () => {
           >
             Cancel
           </Button>
-          <SupportButton>Create a new Virtual IP Address for your load balancer.</SupportButton>
+          <SupportButton>Create a new Virtual IP Address (VIP) for your application.</SupportButton>
         </ContentHeader>
         <form onSubmit={handleSubmit}>
           <Grid container spacing={3}>
@@ -207,10 +244,10 @@ export const VipCreatePage = () => {
                       onChange={(e) => setVipFqdn(e.target.value)}
                       margin="normal"
                       variant="outlined"
+                      placeholder="e.g., app.example.com"
                       required
                       error={!!formErrors.vipFqdn}
-                      helperText={formErrors.vipFqdn || "e.g., app.example.com"}
-                      placeholder="app.example.com"
+                      helperText={formErrors.vipFqdn || "Fully qualified domain name for the VIP"}
                     />
                   </Grid>
                   <Grid item xs={12} md={6}>
@@ -221,10 +258,10 @@ export const VipCreatePage = () => {
                       onChange={(e) => setVipIp(e.target.value)}
                       margin="normal"
                       variant="outlined"
+                      placeholder="e.g., 192.168.1.10"
                       required
                       error={!!formErrors.vipIp}
-                      helperText={formErrors.vipIp || "e.g., 192.168.1.10"}
-                      placeholder="192.168.1.10"
+                      helperText={formErrors.vipIp || "IP address for the VIP"}
                     />
                   </Grid>
                   <Grid item xs={12} md={6}>
@@ -235,10 +272,10 @@ export const VipCreatePage = () => {
                       onChange={(e) => setPort(e.target.value)}
                       margin="normal"
                       variant="outlined"
+                      placeholder="e.g., 80"
                       required
                       error={!!formErrors.port}
-                      helperText={formErrors.port || "Valid range: 1-65535"}
-                      placeholder="80"
+                      helperText={formErrors.port || "Port number (1-65535)"}
                     />
                   </Grid>
                   <Grid item xs={12} md={6}>
@@ -252,7 +289,7 @@ export const VipCreatePage = () => {
                       variant="outlined"
                       required
                       error={!!formErrors.protocol}
-                      helperText={formErrors.protocol}
+                      helperText={formErrors.protocol || "Protocol for the VIP"}
                     >
                       <MenuItem value="HTTP">HTTP</MenuItem>
                       <MenuItem value="HTTPS">HTTPS</MenuItem>
@@ -278,7 +315,7 @@ export const VipCreatePage = () => {
                       variant="outlined"
                       required
                       error={!!formErrors.environment}
-                      helperText={formErrors.environment}
+                      helperText={formErrors.environment || "Environment for the VIP"}
                     >
                       <MenuItem value="production">Production</MenuItem>
                       <MenuItem value="staging">Staging</MenuItem>
@@ -297,7 +334,7 @@ export const VipCreatePage = () => {
                       variant="outlined"
                       required
                       error={!!formErrors.datacenter}
-                      helperText={formErrors.datacenter}
+                      helperText={formErrors.datacenter || "Datacenter for the VIP"}
                     >
                       <MenuItem value="dc1">DC1</MenuItem>
                       <MenuItem value="dc2">DC2</MenuItem>
@@ -312,46 +349,122 @@ export const VipCreatePage = () => {
                       onChange={(e) => setAppId(e.target.value)}
                       margin="normal"
                       variant="outlined"
+                      placeholder="e.g., APP001"
                       required
                       error={!!formErrors.appId}
                       helperText={formErrors.appId || "Application identifier"}
-                      placeholder="app-123"
                     />
-                  </Grid>
-                  <Grid item xs={12} md={6}>
-                    <TextField
-                      fullWidth
-                      label="Owner"
-                      value={owner}
-                      onChange={(e) => setOwner(e.target.value)}
-                      margin="normal"
-                      variant="outlined"
-                      required
-                      error={!!formErrors.owner}
-                      helperText={formErrors.owner || "Team or individual responsible"}
-                      placeholder="platform-team"
-                    />
-                  </Grid>
-                  <Grid item xs={12} md={6}>
-                    <TextField
-                      fullWidth
-                      select
-                      label="Status"
-                      value={status}
-                      onChange={(e) => setStatus(e.target.value)}
-                      margin="normal"
-                      variant="outlined"
-                      required
-                      error={!!formErrors.status}
-                      helperText={formErrors.status || "Initial status for the VIP"}
-                    >
-                      <MenuItem value="pending">Pending</MenuItem>
-                      <MenuItem value="building">Building</MenuItem>
-                      <MenuItem value="active">Active</MenuItem>
-                      <MenuItem value="inactive">Inactive</MenuItem>
-                    </TextField>
                   </Grid>
                 </Grid>
+              </InfoCard>
+            </Grid>
+            
+            <Grid item xs={12}>
+              <InfoCard title="Pool Members">
+                <Typography variant="body2" paragraph>
+                  Add one or more servers to the load balancing pool.
+                </Typography>
+                
+                {poolMembers.map((member, index) => (
+                  <Paper elevation={1} style={{ padding: 16, marginBottom: 16 }} key={index}>
+                    <Grid container spacing={2}>
+                      <Grid item xs={12}>
+                        <Typography variant="subtitle1">
+                          Pool Member #{index + 1}
+                          {poolMembers.length > 1 && (
+                            <Button
+                              size="small"
+                              color="secondary"
+                              onClick={() => handleRemovePoolMember(index)}
+                              style={{ float: 'right' }}
+                            >
+                              Remove
+                            </Button>
+                          )}
+                        </Typography>
+                      </Grid>
+                      <Grid item xs={12} md={4}>
+                        <TextField
+                          fullWidth
+                          label="Server Name"
+                          value={member.server_name}
+                          onChange={(e) => handlePoolMemberChange(index, 'server_name', e.target.value)}
+                          margin="normal"
+                          variant="outlined"
+                          placeholder="e.g., app-server-01"
+                          required
+                          error={!!getPoolMemberError(index, 'server_name')}
+                          helperText={getPoolMemberError(index, 'server_name')}
+                        />
+                      </Grid>
+                      <Grid item xs={12} md={4}>
+                        <TextField
+                          fullWidth
+                          label="Server IP"
+                          value={member.server_ip}
+                          onChange={(e) => handlePoolMemberChange(index, 'server_ip', e.target.value)}
+                          margin="normal"
+                          variant="outlined"
+                          placeholder="e.g., 192.168.1.100"
+                          required
+                          error={!!getPoolMemberError(index, 'server_ip')}
+                          helperText={getPoolMemberError(index, 'server_ip')}
+                        />
+                      </Grid>
+                      <Grid item xs={12} md={4}>
+                        <TextField
+                          fullWidth
+                          label="Server Port"
+                          value={member.server_port}
+                          onChange={(e) => handlePoolMemberChange(index, 'server_port', e.target.value)}
+                          margin="normal"
+                          variant="outlined"
+                          placeholder="e.g., 8080"
+                          required
+                          error={!!getPoolMemberError(index, 'server_port')}
+                          helperText={getPoolMemberError(index, 'server_port')}
+                        />
+                      </Grid>
+                      <Grid item xs={12} md={6}>
+                        <TextField
+                          fullWidth
+                          label="Weight"
+                          value={member.weight}
+                          onChange={(e) => handlePoolMemberChange(index, 'weight', e.target.value)}
+                          margin="normal"
+                          variant="outlined"
+                          placeholder="e.g., 1"
+                          type="number"
+                          InputProps={{ inputProps: { min: 1, max: 100 } }}
+                        />
+                      </Grid>
+                      <Grid item xs={12} md={6}>
+                        <TextField
+                          fullWidth
+                          select
+                          label="Status"
+                          value={member.status}
+                          onChange={(e) => handlePoolMemberChange(index, 'status', e.target.value)}
+                          margin="normal"
+                          variant="outlined"
+                        >
+                          <MenuItem value="active">Active</MenuItem>
+                          <MenuItem value="inactive">Inactive</MenuItem>
+                          <MenuItem value="draining">Draining</MenuItem>
+                        </TextField>
+                      </Grid>
+                    </Grid>
+                  </Paper>
+                ))}
+                
+                <Button
+                  variant="outlined"
+                  color="primary"
+                  onClick={handleAddPoolMember}
+                  style={{ marginTop: 8 }}
+                >
+                  Add Pool Member
+                </Button>
               </InfoCard>
             </Grid>
             
@@ -371,10 +484,10 @@ export const VipCreatePage = () => {
                     variant="contained"
                     color="primary"
                     type="submit"
-                    disabled={saving}
-                    startIcon={saving ? <CircularProgress size={20} /> : <Save />}
+                    disabled={loading}
+                    startIcon={loading ? <CircularProgress size={20} /> : <Save />}
                   >
-                    {saving ? 'Creating...' : 'Create VIP'}
+                    {loading ? 'Creating...' : 'Create VIP'}
                   </Button>
                 </Grid>
               </Grid>

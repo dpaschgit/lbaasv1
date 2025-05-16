@@ -68,9 +68,7 @@ export const VipViewPage = () => {
 
   const navigateToMainPage = () => {
     try {
-      const currentUrl = window.location.href;
-      const baseUrl = currentUrl.split('/lbaas-frontend')[0];
-      window.location.href = `${baseUrl}/lbaas-frontend`;
+      window.location.href = '/lbaas-frontend';
     } catch (error) {
       console.error('Navigation error:', error);
     }

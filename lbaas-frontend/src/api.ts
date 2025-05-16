@@ -29,7 +29,7 @@ export interface PoolMember {
 export interface AuthToken {
   access_token: string;
   token_type: string;
-  expires_in: number;
+  expires_in?: number;
 }
 
 export interface DeleteResponse {
@@ -51,7 +51,7 @@ export const lbaasFrontendApiRef = createApiRef<LbaasApi>({
   id: 'plugin.lbaas-frontend.api',
 });
 
-// Token storage keys
+// Token storage key
 const TOKEN_STORAGE_KEY = 'lbaas_auth_token';
 
 // API implementation
@@ -79,164 +79,204 @@ export class LbaasFrontendApiClient implements LbaasApi {
     localStorage.removeItem(TOKEN_STORAGE_KEY);
   }
 
-  // Login method
+  // Login method - uses OAuth2 password flow
   async login(username: string, password: string): Promise<AuthToken> {
-    const baseUrl = await this.discoveryApi.getBaseUrl('lbaas');
-    const response = await this.fetchApi.fetch(`${baseUrl}/auth/login`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ username, password }),
-    });
+    try {
+      const baseUrl = await this.discoveryApi.getBaseUrl('lbaas');
+      console.log(`Attempting login to ${baseUrl}/api/v1/auth/token with username: ${username}`);
+      
+      // Create form data for OAuth2 password flow
+      const formData = new URLSearchParams();
+      formData.append('username', username);
+      formData.append('password', password);
+      
+      const response = await this.fetchApi.fetch(`${baseUrl}/api/v1/auth/token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: formData.toString(),
+      });
 
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || 'Failed to login');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
+        console.error('Login failed:', errorData);
+        throw new Error(errorData.message || `Login failed with status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('Login successful, received token');
+      
+      // Store the token for future use
+      this.storeToken(data.access_token);
+      return data;
+    } catch (error) {
+      console.error('Login error:', error);
+      throw error;
     }
-
-    const data = await response.json();
-    // Store the token for future use
-    this.storeToken(data.access_token);
-    return data;
   }
 
   // List VIPs
   async listVips(token?: string): Promise<Vip[]> {
-    const baseUrl = await this.discoveryApi.getBaseUrl('lbaas');
-    const authToken = token || this.getStoredToken();
-    
-    if (!authToken) {
-      throw new Error('Authentication required');
-    }
-
-    const response = await this.fetchApi.fetch(`${baseUrl}/vips`, {
-      headers: {
-        Authorization: `Bearer ${authToken}`,
-      },
-    });
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        this.clearToken(); // Clear invalid token
-        throw new Error('Authentication expired. Please login again.');
+    try {
+      const baseUrl = await this.discoveryApi.getBaseUrl('lbaas');
+      const authToken = token || this.getStoredToken();
+      
+      if (!authToken) {
+        throw new Error('Authentication required');
       }
-      throw new Error(`Failed to fetch VIPs: ${response.statusText}`);
-    }
 
-    return await response.json();
+      const response = await this.fetchApi.fetch(`${baseUrl}/api/v1/vips`, {
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          this.clearToken(); // Clear invalid token
+          throw new Error('Authentication expired. Please login again.');
+        }
+        throw new Error(`Failed to fetch VIPs: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error listing VIPs:', error);
+      throw error;
+    }
   }
 
   // Get a specific VIP
   async getVip(id: string, token?: string): Promise<Vip> {
-    const baseUrl = await this.discoveryApi.getBaseUrl('lbaas');
-    const authToken = token || this.getStoredToken();
-    
-    if (!authToken) {
-      throw new Error('Authentication required');
-    }
-
-    const response = await this.fetchApi.fetch(`${baseUrl}/vips/${id}`, {
-      headers: {
-        Authorization: `Bearer ${authToken}`,
-      },
-    });
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        this.clearToken(); // Clear invalid token
-        throw new Error('Authentication expired. Please login again.');
+    try {
+      const baseUrl = await this.discoveryApi.getBaseUrl('lbaas');
+      const authToken = token || this.getStoredToken();
+      
+      if (!authToken) {
+        throw new Error('Authentication required');
       }
-      throw new Error(`Failed to fetch VIP: ${response.statusText}`);
-    }
 
-    return await response.json();
+      const response = await this.fetchApi.fetch(`${baseUrl}/api/v1/vips/${id}`, {
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          this.clearToken(); // Clear invalid token
+          throw new Error('Authentication expired. Please login again.');
+        }
+        throw new Error(`Failed to fetch VIP: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error getting VIP:', error);
+      throw error;
+    }
   }
 
   // Create a new VIP
   async createVip(vip: Partial<Vip>, token?: string): Promise<Vip> {
-    const baseUrl = await this.discoveryApi.getBaseUrl('lbaas');
-    const authToken = token || this.getStoredToken();
-    
-    if (!authToken) {
-      throw new Error('Authentication required');
-    }
-
-    const response = await this.fetchApi.fetch(`${baseUrl}/vips`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${authToken}`,
-      },
-      body: JSON.stringify(vip),
-    });
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        this.clearToken(); // Clear invalid token
-        throw new Error('Authentication expired. Please login again.');
+    try {
+      const baseUrl = await this.discoveryApi.getBaseUrl('lbaas');
+      const authToken = token || this.getStoredToken();
+      
+      if (!authToken) {
+        throw new Error('Authentication required');
       }
-      throw new Error(`Failed to create VIP: ${response.statusText}`);
-    }
 
-    return await response.json();
+      const response = await this.fetchApi.fetch(`${baseUrl}/api/v1/vips`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify(vip),
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          this.clearToken(); // Clear invalid token
+          throw new Error('Authentication expired. Please login again.');
+        }
+        throw new Error(`Failed to create VIP: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error creating VIP:', error);
+      throw error;
+    }
   }
 
   // Update an existing VIP
   async updateVip(id: string, vip: Partial<Vip>, token?: string): Promise<Vip> {
-    const baseUrl = await this.discoveryApi.getBaseUrl('lbaas');
-    const authToken = token || this.getStoredToken();
-    
-    if (!authToken) {
-      throw new Error('Authentication required');
-    }
-
-    const response = await this.fetchApi.fetch(`${baseUrl}/vips/${id}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${authToken}`,
-      },
-      body: JSON.stringify(vip),
-    });
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        this.clearToken(); // Clear invalid token
-        throw new Error('Authentication expired. Please login again.');
+    try {
+      const baseUrl = await this.discoveryApi.getBaseUrl('lbaas');
+      const authToken = token || this.getStoredToken();
+      
+      if (!authToken) {
+        throw new Error('Authentication required');
       }
-      throw new Error(`Failed to update VIP: ${response.statusText}`);
-    }
 
-    return await response.json();
+      const response = await this.fetchApi.fetch(`${baseUrl}/api/v1/vips/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify(vip),
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          this.clearToken(); // Clear invalid token
+          throw new Error('Authentication expired. Please login again.');
+        }
+        throw new Error(`Failed to update VIP: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error updating VIP:', error);
+      throw error;
+    }
   }
 
   // Delete a VIP
   async deleteVip(id: string, incidentId: string, token?: string): Promise<DeleteResponse> {
-    const baseUrl = await this.discoveryApi.getBaseUrl('lbaas');
-    const authToken = token || this.getStoredToken();
-    
-    if (!authToken) {
-      throw new Error('Authentication required');
-    }
-
-    const response = await this.fetchApi.fetch(`${baseUrl}/vips/${id}`, {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${authToken}`,
-      },
-      body: JSON.stringify({ incident_id: incidentId }),
-    });
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        this.clearToken(); // Clear invalid token
-        throw new Error('Authentication expired. Please login again.');
+    try {
+      const baseUrl = await this.discoveryApi.getBaseUrl('lbaas');
+      const authToken = token || this.getStoredToken();
+      
+      if (!authToken) {
+        throw new Error('Authentication required');
       }
-      throw new Error(`Failed to delete VIP: ${response.statusText}`);
-    }
 
-    return await response.json();
+      const response = await this.fetchApi.fetch(`${baseUrl}/api/v1/vips/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ servicenow_incident_id: incidentId }),
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          this.clearToken(); // Clear invalid token
+          throw new Error('Authentication expired. Please login again.');
+        }
+        throw new Error(`Failed to delete VIP: ${response.statusText}`);
+      }
+
+      return { success: true, message: 'VIP deleted successfully' };
+    } catch (error) {
+      console.error('Error deleting VIP:', error);
+      throw error;
+    }
   }
 }
