@@ -1,4 +1,4 @@
-import { createApiRef, DiscoveryApi, FetchApi } from '@backstage/core-plugin-api';
+import { createApiRef } from '@backstage/core-plugin-api';
 
 // Define the API interface
 export interface Vip {
@@ -39,11 +39,11 @@ export interface DeleteResponse {
 
 export interface LbaasApi {
   login(username: string, password: string): Promise<AuthToken>;
-  listVips(token?: string): Promise<Vip[]>;
-  getVip(id: string, token?: string): Promise<Vip>;
-  createVip(vip: Partial<Vip>, token?: string): Promise<Vip>;
-  updateVip(id: string, vip: Partial<Vip>, token?: string): Promise<Vip>;
-  deleteVip(id: string, incidentId: string, token?: string): Promise<DeleteResponse>;
+  getVips(): Promise<Vip[]>;
+  getVip(id: string): Promise<Vip>;
+  createVip(vip: Partial<Vip>): Promise<Vip>;
+  updateVip(id: string, vip: Partial<Vip>, incidentId: string): Promise<Vip>;
+  deleteVip(id: string, incidentId: string): Promise<DeleteResponse>;
 }
 
 // Create an API reference
@@ -56,14 +56,6 @@ const TOKEN_STORAGE_KEY = 'lbaas_auth_token';
 
 // API implementation
 export class LbaasFrontendApiClient implements LbaasApi {
-  private readonly discoveryApi: DiscoveryApi;
-  private readonly fetchApi: FetchApi;
-
-  constructor(options: { discoveryApi: DiscoveryApi; fetchApi: FetchApi }) {
-    this.discoveryApi = options.discoveryApi;
-    this.fetchApi = options.fetchApi;
-  }
-
   // Store token in localStorage
   private storeToken(token: string): void {
     localStorage.setItem(TOKEN_STORAGE_KEY, token);
@@ -82,15 +74,15 @@ export class LbaasFrontendApiClient implements LbaasApi {
   // Login method - uses OAuth2 password flow
   async login(username: string, password: string): Promise<AuthToken> {
     try {
-      const baseUrl = await this.discoveryApi.getBaseUrl('lbaas');
-      console.log(`Attempting login to ${baseUrl}/api/v1/auth/token with username: ${username}`);
+      console.log(`Attempting login with username: ${username}`);
       
       // Create form data for OAuth2 password flow
       const formData = new URLSearchParams();
       formData.append('username', username);
       formData.append('password', password);
       
-      const response = await this.fetchApi.fetch(`${baseUrl}/api/v1/auth/token`, {
+      // Use the direct Backstage proxy path that maps to /api/v1/auth/token
+      const response = await fetch('/lbaas/auth/token', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -117,16 +109,15 @@ export class LbaasFrontendApiClient implements LbaasApi {
   }
 
   // List VIPs
-  async listVips(token?: string): Promise<Vip[]> {
+  async getVips(): Promise<Vip[]> {
     try {
-      const baseUrl = await this.discoveryApi.getBaseUrl('lbaas');
-      const authToken = token || this.getStoredToken();
+      const authToken = this.getStoredToken();
       
       if (!authToken) {
         throw new Error('Authentication required');
       }
 
-      const response = await this.fetchApi.fetch(`${baseUrl}/api/v1/vips`, {
+      const response = await fetch('/lbaas/vips', {
         headers: {
           Authorization: `Bearer ${authToken}`,
         },
@@ -148,16 +139,15 @@ export class LbaasFrontendApiClient implements LbaasApi {
   }
 
   // Get a specific VIP
-  async getVip(id: string, token?: string): Promise<Vip> {
+  async getVip(id: string): Promise<Vip> {
     try {
-      const baseUrl = await this.discoveryApi.getBaseUrl('lbaas');
-      const authToken = token || this.getStoredToken();
+      const authToken = this.getStoredToken();
       
       if (!authToken) {
         throw new Error('Authentication required');
       }
 
-      const response = await this.fetchApi.fetch(`${baseUrl}/api/v1/vips/${id}`, {
+      const response = await fetch(`/lbaas/vips/${id}`, {
         headers: {
           Authorization: `Bearer ${authToken}`,
         },
@@ -179,16 +169,15 @@ export class LbaasFrontendApiClient implements LbaasApi {
   }
 
   // Create a new VIP
-  async createVip(vip: Partial<Vip>, token?: string): Promise<Vip> {
+  async createVip(vip: Partial<Vip>): Promise<Vip> {
     try {
-      const baseUrl = await this.discoveryApi.getBaseUrl('lbaas');
-      const authToken = token || this.getStoredToken();
+      const authToken = this.getStoredToken();
       
       if (!authToken) {
         throw new Error('Authentication required');
       }
 
-      const response = await this.fetchApi.fetch(`${baseUrl}/api/v1/vips`, {
+      const response = await fetch('/lbaas/vips', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -213,22 +202,24 @@ export class LbaasFrontendApiClient implements LbaasApi {
   }
 
   // Update an existing VIP
-  async updateVip(id: string, vip: Partial<Vip>, token?: string): Promise<Vip> {
+  async updateVip(id: string, vip: Partial<Vip>, incidentId: string): Promise<Vip> {
     try {
-      const baseUrl = await this.discoveryApi.getBaseUrl('lbaas');
-      const authToken = token || this.getStoredToken();
+      const authToken = this.getStoredToken();
       
       if (!authToken) {
         throw new Error('Authentication required');
       }
 
-      const response = await this.fetchApi.fetch(`${baseUrl}/api/v1/vips/${id}`, {
+      const response = await fetch(`/lbaas/vips/${id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${authToken}`,
         },
-        body: JSON.stringify(vip),
+        body: JSON.stringify({
+          ...vip,
+          servicenow_incident_id: incidentId
+        }),
       });
 
       if (!response.ok) {
@@ -247,16 +238,15 @@ export class LbaasFrontendApiClient implements LbaasApi {
   }
 
   // Delete a VIP
-  async deleteVip(id: string, incidentId: string, token?: string): Promise<DeleteResponse> {
+  async deleteVip(id: string, incidentId: string): Promise<DeleteResponse> {
     try {
-      const baseUrl = await this.discoveryApi.getBaseUrl('lbaas');
-      const authToken = token || this.getStoredToken();
+      const authToken = this.getStoredToken();
       
       if (!authToken) {
         throw new Error('Authentication required');
       }
 
-      const response = await this.fetchApi.fetch(`${baseUrl}/api/v1/vips/${id}`, {
+      const response = await fetch(`/lbaas/vips/${id}`, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',

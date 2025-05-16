@@ -1,20 +1,23 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import {
-  Table,
-  TableColumn,
-  CircularProgress,
-  Dialog,
-  DialogTitle,
-  DialogContent,
+import { 
+  Typography, 
+  Grid, 
+  Button, 
+  CircularProgress, 
+  TextField, 
+  Dialog, 
+  DialogTitle, 
+  DialogContent, 
   DialogActions,
-  Button,
-  TextField,
-  Typography,
-  Grid,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
   Paper,
   IconButton,
-  makeStyles,
+  Tooltip
 } from '@material-ui/core';
 import { AddCircleOutline, Edit, Delete, Visibility } from '@material-ui/icons';
 import { InfoCard, Header, Page, Content, ContentHeader, SupportButton, StatusOK, StatusError, StatusPending, StatusAborted, StatusRunning } from '@backstage/core-components';
@@ -24,102 +27,68 @@ import { lbaasFrontendApiRef } from '../../api';
 // Token storage key - must match the one in api.ts
 const TOKEN_STORAGE_KEY = 'lbaas_auth_token';
 
-const useStyles = makeStyles((theme) => ({
-  loginContainer: {
-    padding: theme.spacing(3),
-    maxWidth: 400,
-    margin: '0 auto',
-  },
-  loginButton: {
-    marginTop: theme.spacing(2),
-  },
-  statusCell: {
-    display: 'flex',
-    alignItems: 'center',
-  },
-  statusIcon: {
-    marginRight: theme.spacing(1),
-  },
-  actionButton: {
-    marginRight: theme.spacing(1),
-  },
-  deleteDialog: {
-    minWidth: 400,
-  },
-  errorText: {
-    color: theme.palette.error.main,
-    marginTop: theme.spacing(1),
-  },
-  logoutButton: {
-    marginLeft: theme.spacing(2),
-  },
-  loadingContainer: {
-    display: 'flex',
-    justifyContent: 'center',
-    padding: theme.spacing(4),
-  },
-}));
-
 export const VipListPage = () => {
-  const classes = useStyles();
   const alertApi = useApi(alertApiRef);
   const lbaasApi = useApi(lbaasFrontendApiRef);
-  const navigate = useNavigate();
   
-  const [loading, setLoading] = useState(true);
   const [vips, setVips] = useState([]);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [loginError, setLoginError] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState(null);
+  
+  // Delete confirmation dialog
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [selectedVip, setSelectedVip] = useState(null);
-  const [incidentId, setIncidentId] = useState('');
-  const [incidentIdError, setIncidentIdError] = useState('');
+  const [deleteVipId, setDeleteVipId] = useState(null);
+  const [deleteVipName, setDeleteVipName] = useState('');
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [servicenowIncidentId, setServicenowIncidentId] = useState('');
+  const [servicenowIncidentIdError, setServicenowIncidentIdError] = useState('');
 
-  // Check for existing authentication token on component mount
   useEffect(() => {
+    // Check if we have a token in localStorage
     const token = localStorage.getItem(TOKEN_STORAGE_KEY);
     if (token) {
+      console.log('Found authentication token in localStorage');
       setIsAuthenticated(true);
-      fetchVips(token);
+      fetchVips();
     } else {
-      setLoading(false);
+      console.log('No authentication token found, showing login form');
+      setIsAuthenticated(false);
     }
   }, []);
 
-  // Fetch VIPs from API
-  const fetchVips = async (token) => {
+  const fetchVips = async () => {
     try {
       setLoading(true);
-      const data = await lbaasApi.listVips(token);
-      setVips(data);
       setError(null);
-    } catch (err) {
-      console.error('Error fetching VIPs:', err);
-      setError(err.message || 'Failed to fetch VIPs');
       
-      // If authentication error, clear token and show login
-      if (err.message.includes('Authentication') || err.message.includes('login')) {
-        localStorage.removeItem(TOKEN_STORAGE_KEY);
+      console.log('Fetching VIPs...');
+      const data = await lbaasApi.getVips();
+      console.log('Fetched VIPs:', data);
+      
+      setVips(data);
+    } catch (e) {
+      console.error('Error fetching VIPs:', e);
+      setError(e);
+      
+      // If authentication error, show login form
+      if (e.message.includes('Authentication') || e.message.includes('login')) {
         setIsAuthenticated(false);
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
+      } else {
+        alertApi.post({ message: `Error: ${e.message}`, severity: 'error' });
       }
-      
-      alertApi.post({
-        message: `Error: ${err.message}`,
-        severity: 'error',
-      });
     } finally {
       setLoading(false);
     }
   };
 
-  // Handle login form submission
   const handleLogin = async (e) => {
     e.preventDefault();
-    setLoginError('');
     
     if (!username || !password) {
       setLoginError('Username and password are required');
@@ -127,251 +96,176 @@ export const VipListPage = () => {
     }
     
     try {
-      setLoading(true);
-      const authData = await lbaasApi.login(username, password);
+      setLoginLoading(true);
+      setLoginError(null);
       
-      if (authData && authData.access_token) {
-        setIsAuthenticated(true);
-        fetchVips(authData.access_token);
-      } else {
-        throw new Error('Invalid response from authentication server');
-      }
-    } catch (err) {
-      console.error('Login error:', err);
-      setLoginError(err.message || 'Login failed');
-      setLoading(false);
+      console.log(`Attempting to login with username: ${username}`);
+      const result = await lbaasApi.login(username, password);
+      console.log('Login successful:', result);
+      
+      setIsAuthenticated(true);
+      fetchVips();
+      
+      // Clear login form
+      setUsername('');
+      setPassword('');
+    } catch (e) {
+      console.error('Login error:', e);
+      setLoginError(e.message);
+      alertApi.post({ message: `Login failed: ${e.message}`, severity: 'error' });
+    } finally {
+      setLoginLoading(false);
     }
   };
 
-  // Handle logout
   const handleLogout = () => {
     localStorage.removeItem(TOKEN_STORAGE_KEY);
     setIsAuthenticated(false);
     setVips([]);
   };
 
-  // Open delete confirmation dialog
-  const openDeleteDialog = (vip) => {
-    setSelectedVip(vip);
-    setIncidentId('');
-    setIncidentIdError('');
+  const openDeleteDialog = (vipId, vipName) => {
+    setDeleteVipId(vipId);
+    setDeleteVipName(vipName);
+    setServicenowIncidentId('');
+    setServicenowIncidentIdError('');
     setDeleteDialogOpen(true);
   };
 
-  // Close delete confirmation dialog
   const closeDeleteDialog = () => {
     setDeleteDialogOpen(false);
-    setSelectedVip(null);
-    setIncidentId('');
-    setIncidentIdError('');
+    setDeleteVipId(null);
+    setDeleteVipName('');
+    setServicenowIncidentId('');
+    setServicenowIncidentIdError('');
   };
 
-  // Handle VIP deletion
+  const validateServicenowIncidentId = (id) => {
+    if (!id) {
+      setServicenowIncidentIdError('Incident ID is required for deletion.');
+      return false;
+    }
+    
+    // Simple validation for ServiceNow incident ID format
+    // Adjust this regex based on your specific requirements
+    const regex = /^(CHG|INC|PRB|TASK)\d{7}$/;
+    if (!regex.test(id)) {
+      setServicenowIncidentIdError('Invalid format. Use format: CHG0012345 or INC0054321');
+      return false;
+    }
+    
+    setServicenowIncidentIdError('');
+    return true;
+  };
+
   const handleDeleteVip = async () => {
-    // Validate ServiceNow incident ID
-    if (!incidentId) {
-      setIncidentIdError('Incident ID is required for deletion.');
+    if (!validateServicenowIncidentId(servicenowIncidentId)) {
       return;
     }
     
     try {
       setDeleteLoading(true);
-      const token = localStorage.getItem(TOKEN_STORAGE_KEY);
       
-      if (!token) {
-        throw new Error('Authentication required. Please login again.');
-      }
+      console.log(`Deleting VIP ${deleteVipId} with incident ID: ${servicenowIncidentId}`);
+      await lbaasApi.deleteVip(deleteVipId, servicenowIncidentId);
       
-      await lbaasApi.deleteVip(selectedVip.id, incidentId, token);
-      
-      alertApi.post({
-        message: 'VIP deleted successfully',
-        severity: 'success',
-      });
-      
-      // Refresh VIP list
-      fetchVips(token);
+      alertApi.post({ message: 'VIP deleted successfully', severity: 'success' });
       closeDeleteDialog();
-    } catch (err) {
-      console.error('Error deleting VIP:', err);
-      setIncidentIdError(err.message || 'Failed to delete VIP');
+      fetchVips();
+    } catch (e) {
+      console.error('Error deleting VIP:', e);
+      alertApi.post({ message: `Error: ${e.message}`, severity: 'error' });
       
-      alertApi.post({
-        message: `Error: ${err.message}`,
-        severity: 'error',
-      });
+      // If authentication error, show login form
+      if (e.message.includes('Authentication') || e.message.includes('login')) {
+        setIsAuthenticated(false);
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
+        closeDeleteDialog();
+      }
     } finally {
       setDeleteLoading(false);
     }
   };
 
-  // Navigate to view VIP details
-  const navigateToViewVip = (vipId) => {
-    try {
-      navigate(`/lbaas-frontend/${vipId}/view`);
-    } catch (error) {
-      console.error('Navigation error:', error);
-      alertApi.post({
-        message: `Error navigating to VIP details: ${error.message}`,
-        severity: 'error',
-      });
-    }
-  };
-
-  // Navigate to edit VIP
-  const navigateToEditVip = (vipId) => {
-    try {
-      navigate(`/lbaas-frontend/${vipId}/edit`);
-    } catch (error) {
-      console.error('Navigation error:', error);
-      alertApi.post({
-        message: `Error navigating to edit VIP: ${error.message}`,
-        severity: 'error',
-      });
-    }
-  };
-
-  // Navigate to create VIP
-  const navigateToCreateVip = () => {
-    try {
-      navigate('/lbaas-frontend/create');
-    } catch (error) {
-      console.error('Navigation error:', error);
-      alertApi.post({
-        message: `Error navigating to create VIP: ${error.message}`,
-        severity: 'error',
-      });
-    }
-  };
-
-  // Render status indicator based on VIP status
-  const renderStatus = (status) => {
+  const getStatusComponent = (status) => {
     switch (status?.toLowerCase()) {
       case 'active':
-        return (
-          <div className={classes.statusCell}>
-            <StatusOK className={classes.statusIcon} />
-            Active
-          </div>
-        );
+        return <StatusOK>Active</StatusOK>;
       case 'pending':
-        return (
-          <div className={classes.statusCell}>
-            <StatusPending className={classes.statusIcon} />
-            Pending
-          </div>
-        );
+        return <StatusPending>Pending</StatusPending>;
       case 'building':
-        return (
-          <div className={classes.statusCell}>
-            <StatusRunning className={classes.statusIcon} />
-            Building
-          </div>
-        );
-      case 'error':
-        return (
-          <div className={classes.statusCell}>
-            <StatusError className={classes.statusIcon} />
-            Error
-          </div>
-        );
+        return <StatusRunning>Building</StatusRunning>;
       case 'inactive':
-        return (
-          <div className={classes.statusCell}>
-            <StatusAborted className={classes.statusIcon} />
-            Inactive
-          </div>
-        );
+        return <StatusAborted>Inactive</StatusAborted>;
+      case 'error':
+        return <StatusError>Error</StatusError>;
       default:
-        return status || 'Unknown';
+        return <StatusPending>Unknown</StatusPending>;
     }
   };
 
-  // Table columns definition
-  const columns: TableColumn[] = [
-    { title: 'FQDN', field: 'vip_fqdn' },
-    { title: 'IP Address', field: 'vip_ip' },
-    { title: 'Port', field: 'port' },
-    { title: 'Protocol', field: 'protocol' },
-    { title: 'Environment', field: 'environment' },
-    { title: 'Datacenter', field: 'datacenter' },
-    { title: 'App ID', field: 'app_id' },
-    { title: 'Owner', field: 'owner' },
-    {
-      title: 'Status',
-      field: 'status',
-      render: (rowData) => renderStatus(rowData.status),
-    },
-    {
-      title: 'Actions',
-      field: 'actions',
-      render: (rowData) => (
-        <>
-          <IconButton
-            className={classes.actionButton}
-            aria-label="view"
-            onClick={() => navigateToViewVip(rowData.id)}
-          >
-            <Visibility />
-          </IconButton>
-          <IconButton
-            className={classes.actionButton}
-            aria-label="edit"
-            onClick={() => navigateToEditVip(rowData.id)}
-          >
-            <Edit />
-          </IconButton>
-          <IconButton
-            className={classes.actionButton}
-            aria-label="delete"
-            onClick={() => openDeleteDialog(rowData)}
-          >
-            <Delete />
-          </IconButton>
-        </>
-      ),
-    },
-  ];
+  // Helper function to navigate to VIP view page
+  const navigateToViewVip = (vipId) => {
+    try {
+      window.location.href = `/lbaas-frontend/${vipId}/view`;
+    } catch (error) {
+      console.error('Navigation error:', error);
+    }
+  };
 
-  // Render login form
+  // Helper function to navigate to VIP edit page
+  const navigateToEditVip = (vipId) => {
+    try {
+      window.location.href = `/lbaas-frontend/${vipId}/edit`;
+    } catch (error) {
+      console.error('Navigation error:', error);
+    }
+  };
+
+  // Helper function to navigate to VIP create page
+  const navigateToCreateVip = () => {
+    try {
+      window.location.href = '/lbaas-frontend/create';
+    } catch (error) {
+      console.error('Navigation error:', error);
+    }
+  };
+
   if (!isAuthenticated) {
     return (
       <Page themeId="tool">
         <Header title="VIP Management" subtitle="Manage Load Balancer VIPs" />
         <Content>
-          <ContentHeader title="Login Required">
-            <SupportButton>Please login to access the VIP management system</SupportButton>
-          </ContentHeader>
-          <Grid container justifyContent="center">
+          <Grid container spacing={3} justifyContent="center">
             <Grid item xs={12} sm={8} md={6} lg={4}>
-              <Paper className={classes.loginContainer}>
+              <InfoCard title="Login Required">
+                <Typography paragraph>
+                  Please login to access the VIP management system
+                </Typography>
                 <form onSubmit={handleLogin}>
-                  <Typography variant="h6" gutterBottom>
-                    Login
-                  </Typography>
                   <TextField
-                    label="Username"
                     fullWidth
-                    margin="normal"
-                    variant="outlined"
+                    label="Username"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
+                    margin="normal"
+                    variant="outlined"
                     placeholder="Username"
                     required
                   />
                   <TextField
-                    label="Password"
                     fullWidth
-                    margin="normal"
-                    variant="outlined"
+                    label="Password"
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
+                    margin="normal"
+                    variant="outlined"
                     placeholder="Password"
                     required
                   />
                   {loginError && (
-                    <Typography className={classes.errorText}>
+                    <Typography color="error" paragraph>
                       {loginError}
                     </Typography>
                   )}
@@ -380,13 +274,12 @@ export const VipListPage = () => {
                     variant="contained"
                     color="primary"
                     fullWidth
-                    className={classes.loginButton}
-                    disabled={loading}
+                    disabled={loginLoading}
                   >
-                    {loading ? 'Logging in...' : 'Login'}
+                    {loginLoading ? <CircularProgress size={24} /> : 'Login'}
                   </Button>
                 </form>
-              </Paper>
+              </InfoCard>
             </Grid>
           </Grid>
         </Content>
@@ -411,67 +304,123 @@ export const VipListPage = () => {
             variant="outlined"
             color="default"
             onClick={handleLogout}
-            className={classes.logoutButton}
+            style={{ marginLeft: 8 }}
           >
             Logout
           </Button>
-          <SupportButton>View and manage your Load Balancer VIPs</SupportButton>
+          <SupportButton>
+            View and manage your Load Balancer Virtual IP Addresses (VIPs).
+          </SupportButton>
         </ContentHeader>
         
-        {loading && (
-          <div className={classes.loadingContainer}>
-            <CircularProgress />
-          </div>
+        {error && (
+          <Grid container spacing={3}>
+            <Grid item xs={12}>
+              <Paper style={{ padding: 16, marginBottom: 16, backgroundColor: '#ffebee' }}>
+                <Typography color="error">Error: {error.message}</Typography>
+                <Button
+                  variant="outlined"
+                  color="primary"
+                  onClick={fetchVips}
+                  style={{ marginTop: 8 }}
+                >
+                  Retry
+                </Button>
+              </Paper>
+            </Grid>
+          </Grid>
         )}
         
-        {error && !loading && (
-          <InfoCard title="Error" severity="error">
-            {error}
-          </InfoCard>
-        )}
-        
-        {!loading && !error && (
-          <InfoCard>
-            <Table
-              options={{
-                search: true,
-                paging: true,
-                pageSize: 10,
-                pageSizeOptions: [5, 10, 20, 50],
-              }}
-              title="Virtual IP Addresses"
-              columns={columns}
-              data={vips}
-            />
-          </InfoCard>
-        )}
+        <Grid container spacing={3}>
+          <Grid item xs={12}>
+            {loading ? (
+              <Paper style={{ padding: 16, textAlign: 'center' }}>
+                <CircularProgress />
+                <Typography style={{ marginTop: 16 }}>Loading VIPs...</Typography>
+              </Paper>
+            ) : vips.length === 0 ? (
+              <Paper style={{ padding: 16, textAlign: 'center' }}>
+                <Typography>No VIPs found.</Typography>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  startIcon={<AddCircleOutline />}
+                  onClick={navigateToCreateVip}
+                  style={{ marginTop: 16 }}
+                >
+                  Create New VIP
+                </Button>
+              </Paper>
+            ) : (
+              <TableContainer component={Paper}>
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>FQDN</TableCell>
+                      <TableCell>IP Address</TableCell>
+                      <TableCell>Port</TableCell>
+                      <TableCell>Protocol</TableCell>
+                      <TableCell>Environment</TableCell>
+                      <TableCell>Status</TableCell>
+                      <TableCell>Actions</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {vips.map((vip) => (
+                      <TableRow key={vip.id}>
+                        <TableCell>{vip.vip_fqdn}</TableCell>
+                        <TableCell>{vip.vip_ip}</TableCell>
+                        <TableCell>{vip.port}</TableCell>
+                        <TableCell>{vip.protocol}</TableCell>
+                        <TableCell>{vip.environment}</TableCell>
+                        <TableCell>{getStatusComponent(vip.status)}</TableCell>
+                        <TableCell>
+                          <Tooltip title="View Details">
+                            <IconButton onClick={() => navigateToViewVip(vip.id)}>
+                              <Visibility />
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title="Edit">
+                            <IconButton onClick={() => navigateToEditVip(vip.id)}>
+                              <Edit />
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title="Delete">
+                            <IconButton onClick={() => openDeleteDialog(vip.id, vip.vip_fqdn)}>
+                              <Delete />
+                            </IconButton>
+                          </Tooltip>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </Grid>
+        </Grid>
         
         {/* Delete Confirmation Dialog */}
-        <Dialog
-          open={deleteDialogOpen}
-          onClose={closeDeleteDialog}
-          aria-labelledby="delete-dialog-title"
-        >
-          <DialogTitle id="delete-dialog-title">Confirm Deletion</DialogTitle>
-          <DialogContent className={classes.deleteDialog}>
-            <Typography gutterBottom>
-              Are you sure you want to delete the VIP{' '}
-              <strong>{selectedVip?.vip_fqdn}</strong>?
+        <Dialog open={deleteDialogOpen} onClose={closeDeleteDialog}>
+          <DialogTitle>Confirm Deletion</DialogTitle>
+          <DialogContent>
+            <Typography paragraph>
+              Are you sure you want to delete the VIP <strong>{deleteVipName}</strong>?
             </Typography>
-            <Typography variant="body2" color="textSecondary" paragraph>
+            <Typography paragraph>
               This action cannot be undone. Please provide a ServiceNow incident ID for this change.
             </Typography>
             <TextField
-              label="ServiceNow Incident ID"
               fullWidth
+              label="ServiceNow Incident ID"
+              value={servicenowIncidentId}
+              onChange={(e) => setServicenowIncidentId(e.target.value)}
               margin="normal"
               variant="outlined"
-              value={incidentId}
-              onChange={(e) => setIncidentId(e.target.value)}
               placeholder="e.g., CHG0012345 or INC0054321"
-              error={!!incidentIdError}
-              helperText={incidentIdError}
               required
+              error={!!servicenowIncidentIdError}
+              helperText={servicenowIncidentIdError || "Format: CHG0012345 or INC0054321"}
             />
           </DialogContent>
           <DialogActions>
@@ -483,7 +432,7 @@ export const VipListPage = () => {
               color="secondary"
               disabled={deleteLoading}
             >
-              {deleteLoading ? 'Deleting...' : 'Delete'}
+              {deleteLoading ? <CircularProgress size={24} /> : 'Delete'}
             </Button>
           </DialogActions>
         </Dialog>
