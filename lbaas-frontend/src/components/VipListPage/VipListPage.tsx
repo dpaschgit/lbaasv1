@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, FormEvent } from 'react';
 import { Typography, Grid, Button, CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, IconButton, Tooltip, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, TextField } from '@material-ui/core';
 import { Link as RouterLink } from 'react-router-dom';
 import { AddCircleOutline, Edit, Delete, Visibility } from '@material-ui/icons';
@@ -18,83 +18,11 @@ import {
   StatusAborted,
   StatusRunning
 } from '@backstage/core-components';
-import { useApi, alertApiRef, identityApiRef } from '@backstage/core-plugin-api';
-
-// Placeholder for API client - this will be defined in a separate api.ts file
-// For now, we'll mock the data fetching
-
-// Mocked API call to fetch VIPs (replace with actual API client later)
-const mockFetchVips = async (authToken: string) => {
-  console.log('Fetching VIPs with token:', authToken ? 'Token Present' : 'No Token');
-  await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network delay
-  // This data should align with your seed_mongo.py and backend models
-  return [
-    {
-      id: '65f1c3b3e4b0f8a7b0a3b3e1',
-      vip_fqdn: 'app1.prod.ladc.davelab.net',
-      vip_ip: '10.1.1.101',
-      port: 443,
-      protocol: 'HTTPS',
-      environment: 'Prod',
-      datacenter: 'LADC',
-      app_id: 'APP001',
-      owner: 'user1',
-      status: 'Active',
-    },
-    {
-      id: '65f1c3b3e4b0f8a7b0a3b3e2',
-      vip_fqdn: 'app1.uat.nydc.davelab.net',
-      vip_ip: '10.2.1.101',
-      port: 80,
-      protocol: 'HTTP',
-      environment: 'UAT',
-      datacenter: 'NYDC',
-      app_id: 'APP001',
-      owner: 'user1',
-      status: 'Building',
-    },
-    {
-      id: '65f1c3b3e4b0f8a7b0a3b3e3',
-      vip_fqdn: 'app2.dev.ladc.davelab.net',
-      vip_ip: '192.168.1.50',
-      port: 8080,
-      protocol: 'TCP',
-      environment: 'DEV',
-      datacenter: 'LADC',
-      app_id: 'APP002',
-      owner: 'user2',
-      status: 'Error',
-    },
-  ];
-};
-
-// Mocked API call to delete a VIP
-const mockDeleteVip = async (vipId: string, incidentId: string, authToken: string) => {
-  console.log(`Attempting to delete VIP: ${vipId} with Incident: ${incidentId} and token: ${authToken ? 'Token Present' : 'No Token'}`);
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  // Simulate success/failure
-  if (incidentId === 'valid_incident_for_delete') {
-    return { success: true, message: `VIP ${vipId} deleted successfully.` };
-  }
-  return { success: false, message: 'Failed to delete VIP. Invalid incident ID or other error.' };
-};
-
-
-interface VipRowData {
-  id: string;
-  vip_fqdn: string;
-  vip_ip: string;
-  port: number;
-  protocol: string;
-  environment: string;
-  datacenter: string;
-  app_id: string;
-  owner: string;
-  status: string; 
-}
+import { useApi, alertApiRef } from '@backstage/core-plugin-api';
+import { lbaasFrontendApiRef, Vip, AuthToken } from '../../api';
 
 const getStatusComponent = (status: string) => {
-  switch (status.toLowerCase()) {
+  switch (status?.toLowerCase()) {
     case 'active':
       return <StatusOK>{status}</StatusOK>;
     case 'building':
@@ -106,36 +34,71 @@ const getStatusComponent = (status: string) => {
     case 'inactive':
       return <StatusAborted>{status}</StatusAborted>;
     default:
-      return <Typography variant="body2">{status}</Typography>;
+      return <Typography variant="body2">{status || 'Unknown'}</Typography>;
   }
 };
 
 export const VipListPage = () => {
   const alertApi = useApi(alertApiRef);
-  const identityApi = useApi(identityApiRef);
-  const [vips, setVips] = useState<VipRowData[]>([]);
-  const [loading, setLoading] = useState(true);
+  const lbaasApi = useApi(lbaasFrontendApiRef);
+  
+  const [vips, setVips] = useState<Vip[]>([]);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
   const [selectedVipId, setSelectedVipId] = useState<string | null>(null);
   const [incidentId, setIncidentId] = useState('');
+  const [token, setToken] = useState<string>('');
+  const [loginOpen, setLoginOpen] = useState(true);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        const token = await identityApi.getCredentials(); // Get auth token
-        const data = await mockFetchVips(token?.token || ''); // Pass token to API call
-        setVips(data);
-      } catch (e: any) {
-        setError(e);
-        alertApi.post({ message: `Error fetching VIPs: ${e.message}`, severity: 'error' });
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchData();
-  }, [alertApi, identityApi]);
+  const handleLogin = async () => {
+    if (!username || !password) {
+      setLoginError('Username and password are required');
+      return;
+    }
+    
+    try {
+      setLoginError('');
+      setLoading(true);
+      const authToken = await lbaasApi.login(username, password);
+      setToken(authToken.access_token);
+      setLoginOpen(false);
+      fetchVips(authToken.access_token);
+    } catch (e: any) {
+      console.error('Login error:', e);
+      setLoginError(e.message || 'Failed to login');
+      setLoading(false);
+    }
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleLogin();
+    }
+  };
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    handleLogin();
+  };
+
+  const fetchVips = async (authToken: string) => {
+    try {
+      setLoading(true);
+      // Use the API client to fetch VIPs with the token
+      const data = await lbaasApi.listVips(authToken);
+      setVips(data);
+    } catch (e: any) {
+      setError(e);
+      alertApi.post({ message: `Error fetching VIPs: ${e.message}`, severity: 'error' });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleDeleteClick = (vipId: string) => {
     setSelectedVipId(vipId);
@@ -149,19 +112,19 @@ export const VipListPage = () => {
   };
 
   const handleConfirmDelete = async () => {
-    if (!selectedVipId || !incidentId) {
+    if (!selectedVipId || !incidentId || !token) {
       alertApi.post({ message: 'Incident ID is required for deletion.', severity: 'error' });
       return;
     }
     try {
-      const token = await identityApi.getCredentials();
-      const result = await mockDeleteVip(selectedVipId, incidentId, token?.token || '');
+      // Use the API client to delete the VIP
+      const result = await lbaasApi.deleteVip(selectedVipId, incidentId, token);
       if (result.success) {
-        alertApi.post({ message: result.message, severity: 'success' });
+        alertApi.post({ message: result.message || 'VIP deleted successfully', severity: 'success' });
         // Refresh VIP list
         setVips(vips.filter(vip => vip.id !== selectedVipId));
       } else {
-        alertApi.post({ message: result.message, severity: 'error' });
+        alertApi.post({ message: result.message || 'Failed to delete VIP', severity: 'error' });
       }
     } catch (e: any) {
       alertApi.post({ message: `Error deleting VIP: ${e.message}`, severity: 'error' });
@@ -169,15 +132,116 @@ export const VipListPage = () => {
     handleCloseDeleteDialog();
   };
 
-  if (loading) {
-    return <CircularProgress />;
+  if (loginOpen) {
+    return (
+      <Page themeId="tool">
+        <Header title="Load Balancer VIPs" subtitle="Manage your Load Balancer Virtual IP Addresses" />
+        <Content>
+          <Grid container spacing={3} justifyContent="center">
+            <Grid item xs={12} sm={8} md={6} lg={4}>
+              <InfoCard title="Login Required">
+                <form onSubmit={handleSubmit}>
+                  <Grid container spacing={2} direction="column" padding={2}>
+                    <Grid item>
+                      <Typography>Please login to access the VIP management system</Typography>
+                    </Grid>
+                    {loginError && (
+                      <Grid item>
+                        <Typography color="error">{loginError}</Typography>
+                      </Grid>
+                    )}
+                    <Grid item>
+                      <TextField
+                        fullWidth
+                        label="Username"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        onKeyPress={handleKeyPress}
+                        margin="normal"
+                        placeholder="Enter username (e.g., user1)"
+                        autoFocus
+                      />
+                    </Grid>
+                    <Grid item>
+                      <TextField
+                        fullWidth
+                        label="Password"
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        onKeyPress={handleKeyPress}
+                        margin="normal"
+                        placeholder="Enter password (e.g., user1)"
+                      />
+                    </Grid>
+                    <Grid item>
+                      <Button
+                        variant="contained"
+                        color="primary"
+                        onClick={handleLogin}
+                        disabled={loading}
+                        fullWidth
+                        type="submit"
+                      >
+                        {loading ? <CircularProgress size={24} /> : 'Login'}
+                      </Button>
+                    </Grid>
+                    <Grid item>
+                      <Typography variant="caption">
+                        Hint: Try user1/user1 or admin/admin
+                      </Typography>
+                    </Grid>
+                  </Grid>
+                </form>
+              </InfoCard>
+            </Grid>
+          </Grid>
+        </Content>
+      </Page>
+    );
+  }
+
+  if (loading && vips.length === 0) {
+    return (
+      <Page themeId="tool">
+        <Header title="Load Balancer VIPs" subtitle="Manage your Load Balancer Virtual IP Addresses" />
+        <Content>
+          <Grid container spacing={3} justifyContent="center" alignItems="center" style={{ height: '50vh' }}>
+            <Grid item>
+              <CircularProgress />
+            </Grid>
+          </Grid>
+        </Content>
+      </Page>
+    );
   }
 
   if (error) {
-    return <Typography color="error">Error loading VIPs: {error.message}</Typography>;
+    return (
+      <Page themeId="tool">
+        <Header title="Load Balancer VIPs" subtitle="Manage your Load Balancer Virtual IP Addresses" />
+        <Content>
+          <Grid container spacing={3} justifyContent="center">
+            <Grid item xs={12}>
+              <InfoCard title="Error">
+                <Typography color="error">Error loading VIPs: {error.message}</Typography>
+                <Button 
+                  variant="contained" 
+                  color="primary" 
+                  onClick={() => setLoginOpen(true)} 
+                  style={{ marginTop: 16 }}
+                >
+                  Try Again
+                </Button>
+              </InfoCard>
+            </Grid>
+          </Grid>
+        </Content>
+      </Page>
+    );
   }
 
-  const columns: TableProps<VipRowData>['columns'] = [
+  const columns: TableProps<Vip>['columns'] = [
     { title: 'FQDN', field: 'vip_fqdn' },
     { title: 'IP Address', field: 'vip_ip' },
     { title: 'Port', field: 'port', type: 'numeric' },
@@ -186,13 +250,13 @@ export const VipListPage = () => {
     { title: 'Datacenter', field: 'datacenter' },
     { title: 'App ID', field: 'app_id' },
     { title: 'Owner', field: 'owner' },
-    { title: 'Status', field: 'status', render: rowData => getStatusComponent(rowData.status) },
+    { title: 'Status', field: 'status', render: rowData => getStatusComponent(rowData.status || '') },
     {
       title: 'Actions',
-      render: (rowData: VipRowData) => (
+      render: (rowData: Vip) => (
         <>
           <Tooltip title="View Details">
-            <IconButton component={RouterLink} to={`/lbaas-frontend/${rowData.id}`}>
+            <IconButton component={RouterLink} to={`/lbaas-frontend/${rowData.id}/view`}>
               <Visibility />
             </IconButton>
           </Tooltip>
@@ -259,7 +323,7 @@ export const VipListPage = () => {
                         <TableCell>{row.datacenter}</TableCell>
                         <TableCell>{row.app_id}</TableCell>
                         <TableCell>{row.owner}</TableCell>
-                        <TableCell>{getStatusComponent(row.status)}</TableCell>
+                        <TableCell>{getStatusComponent(row.status || '')}</TableCell>
                         <TableCell>
                           <Tooltip title="View Details">
                             <IconButton component={RouterLink} to={`/lbaas-frontend/${row.id}/view`}>
@@ -267,7 +331,6 @@ export const VipListPage = () => {
                             </IconButton>
                           </Tooltip>
                           <Tooltip title="Modify VIP">
-                            {/* Modify will eventually prompt for incident ID before navigating */}
                             <IconButton component={RouterLink} to={`/lbaas-frontend/${row.id}/edit`}>
                               <Edit />
                             </IconButton>
@@ -318,4 +381,3 @@ export const VipListPage = () => {
     </Page>
   );
 };
-

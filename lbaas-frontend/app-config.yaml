@@ -25,7 +25,9 @@ auth:
 
 proxy:
   '/lbaas':
-    target: 'http://localhost:8000/api/v1'
+    target: 'http://localhost:8000'
+    pathRewrite:
+      '^/lbaas': '/api/v1'
     changeOrigin: true
     secure: false
     headers:
