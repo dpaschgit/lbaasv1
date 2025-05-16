@@ -17,6 +17,9 @@ import {
 import { useApi, alertApiRef } from '@backstage/core-plugin-api';
 import { lbaasFrontendApiRef, Vip, AuthToken } from '../../api';
 
+// Token storage key - must match the one in api.ts
+const TOKEN_STORAGE_KEY = 'lbaas_auth_token';
+
 const getStatusComponent = (status: string) => {
   switch (status?.toLowerCase()) {
     case 'active':
@@ -50,6 +53,17 @@ export const VipListPage = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
+
+  // Check for existing token on component mount
+  useEffect(() => {
+    const storedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
+    if (storedToken) {
+      console.log('Found stored authentication token');
+      setToken(storedToken);
+      setLoginOpen(false);
+      fetchVips(storedToken);
+    }
+  }, []);
 
   // Navigation functions using window.location for maximum compatibility
   const navigateToView = (vipId: string) => {
@@ -121,6 +135,13 @@ export const VipListPage = () => {
     }
   };
 
+  const handleLogout = () => {
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    setToken('');
+    setLoginOpen(true);
+    setVips([]);
+  };
+
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -142,6 +163,10 @@ export const VipListPage = () => {
     } catch (e: any) {
       setError(e);
       alertApi.post({ message: `Error fetching VIPs: ${e.message}`, severity: 'error' });
+      // If authentication error, show login form
+      if (e.message.includes('Authentication') || e.message.includes('login')) {
+        handleLogout();
+      }
     } finally {
       setLoading(false);
     }
@@ -196,6 +221,10 @@ export const VipListPage = () => {
       }
     } catch (e: any) {
       alertApi.post({ message: `Error deleting VIP: ${e.message}`, severity: 'error' });
+      // If authentication error, show login form
+      if (e.message.includes('Authentication') || e.message.includes('login')) {
+        handleLogout();
+      }
     }
     handleCloseDeleteDialog();
   };
@@ -309,15 +338,30 @@ export const VipListPage = () => {
       <Header title="Load Balancer VIPs" subtitle="Manage your Load Balancer Virtual IP Addresses" />
       <Content>
         <ContentHeader title="VIP List">
-          <Button
-            variant="contained"
-            color="primary"
-            onClick={navigateToCreate}
-            startIcon={<AddCircleOutline />}
-          >
-            Create New VIP
-          </Button>
-          <SupportButton>Manage and request load balancer VIPs.</SupportButton>
+          <Grid container spacing={2} alignItems="center">
+            <Grid item>
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={navigateToCreate}
+                startIcon={<AddCircleOutline />}
+              >
+                Create New VIP
+              </Button>
+            </Grid>
+            <Grid item>
+              <Button
+                variant="outlined"
+                color="default"
+                onClick={handleLogout}
+              >
+                Logout
+              </Button>
+            </Grid>
+            <Grid item>
+              <SupportButton>Manage and request load balancer VIPs.</SupportButton>
+            </Grid>
+          </Grid>
         </ContentHeader>
         <Grid container spacing={3} direction="column">
           <Grid item>

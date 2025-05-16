@@ -1,22 +1,6 @@
-import React, { useState, FormEvent } from 'react';
-import { 
-  Typography, 
-  Grid, 
-  Button, 
-  TextField, 
-  MenuItem, 
-  Paper, 
-  CircularProgress,
-  Divider,
-  IconButton,
-  Tooltip,
-  FormControl,
-  InputLabel,
-  Select,
-  FormHelperText
-} from '@material-ui/core';
-import { Add as AddIcon, Remove as RemoveIcon } from '@material-ui/icons';
-import { Link as RouterLink, useNavigate } from 'react-router-dom';
+import React, { useEffect, useState, FormEvent } from 'react';
+import { Typography, Grid, Button, CircularProgress, TextField, MenuItem, Paper } from '@material-ui/core';
+import { ArrowBack, Save } from '@material-ui/icons';
 import {
   InfoCard,
   Header,
@@ -26,737 +10,377 @@ import {
   SupportButton,
 } from '@backstage/core-components';
 import { useApi, alertApiRef } from '@backstage/core-plugin-api';
-import { lbaasFrontendApiRef, VipCreate, Monitor, Persistence, PoolMember } from '../../api';
+import { lbaasFrontendApiRef, Vip } from '../../api';
 
-// Default values for new VIP
-const defaultMonitor: Monitor = {
-  type: 'http',
-  port: 80,
-  send: '/',
-  receive: '200 OK'
-};
-
-const defaultPersistence: Persistence = {
-  type: 'cookie',
-  timeout: 3600
-};
-
-const defaultPoolMember: PoolMember = {
-  ip: '',
-  port: 80
-};
-
-const environments = ['dev', 'test', 'staging', 'prod'];
-const datacenters = ['dc1', 'dc2', 'dc3'];
-const protocols = ['http', 'https', 'tcp'];
-const monitorTypes = ['http', 'https', 'tcp', 'icmp'];
-const persistenceTypes = ['cookie', 'source_ip', 'none'];
-const lbMethods = ['round_robin', 'least_connections', 'fastest_response_time'];
+// Token storage key - must match the one in api.ts
+const TOKEN_STORAGE_KEY = 'lbaas_auth_token';
 
 export const VipCreatePage = () => {
   const alertApi = useApi(alertApiRef);
   const lbaasApi = useApi(lbaasFrontendApiRef);
-  const navigate = useNavigate();
   
-  // Form state
-  const [formData, setFormData] = useState<VipCreate>({
-    vip_fqdn: '',
-    vip_ip: '',
-    app_id: '',
-    environment: 'dev',
-    datacenter: 'dc1',
-    primary_contact_email: '',
-    secondary_contact_email: '',
-    team_distribution_email: '',
-    monitor: { ...defaultMonitor },
-    persistence: { ...defaultPersistence },
-    ssl_cert_name: '',
-    mtls_ca_cert_name: '',
-    pool: [{ ...defaultPoolMember }],
-    owner: '',
-    port: 80,
-    protocol: 'http',
-    lb_method: 'round_robin'
-  });
-  
-  // Form validation state
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  
-  // UI state
   const [loading, setLoading] = useState(false);
-  const [incidentId, setIncidentId] = useState('');
-  const [incidentIdError, setIncidentIdError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   
-  // Handle form field changes
-  const handleChange = (field: string, value: any) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value
-    }));
-    
-    // Clear error for this field if it exists
-    if (errors[field]) {
-      setErrors(prev => {
-        const newErrors = { ...prev };
-        delete newErrors[field];
-        return newErrors;
-      });
+  // Form fields
+  const [vipFqdn, setVipFqdn] = useState('');
+  const [vipIp, setVipIp] = useState('');
+  const [port, setPort] = useState('');
+  const [protocol, setProtocol] = useState('HTTP');
+  const [environment, setEnvironment] = useState('production');
+  const [datacenter, setDatacenter] = useState('dc1');
+  const [appId, setAppId] = useState('');
+  const [owner, setOwner] = useState('');
+  const [status, setStatus] = useState('pending');
+
+  useEffect(() => {
+    // Check for authentication token
+    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+    if (!token) {
+      setLoginOpen(true);
+      alertApi.post({ message: 'Authentication required. Please login.', severity: 'warning' });
+    }
+  }, []);
+
+  const navigateToMainPage = () => {
+    try {
+      const currentUrl = window.location.href;
+      const baseUrl = currentUrl.split('/lbaas-frontend')[0];
+      window.location.href = `${baseUrl}/lbaas-frontend`;
+    } catch (error) {
+      console.error('Navigation error:', error);
     }
   };
-  
-  // Handle nested object changes (monitor, persistence)
-  const handleNestedChange = (parent: string, field: string, value: any) => {
-    setFormData(prev => ({
-      ...prev,
-      [parent]: {
-        ...prev[parent as keyof VipCreate],
-        [field]: value
-      }
-    }));
+
+  const validateForm = () => {
+    const errors: Record<string, string> = {};
     
-    // Clear error for this field if it exists
-    const errorKey = `${parent}.${field}`;
-    if (errors[errorKey]) {
-      setErrors(prev => {
-        const newErrors = { ...prev };
-        delete newErrors[errorKey];
-        return newErrors;
-      });
-    }
-  };
-  
-  // Handle pool member changes
-  const handlePoolMemberChange = (index: number, field: string, value: any) => {
-    setFormData(prev => {
-      const newPool = [...prev.pool];
-      newPool[index] = {
-        ...newPool[index],
-        [field]: value
-      };
-      return {
-        ...prev,
-        pool: newPool
-      };
-    });
-    
-    // Clear error for this field if it exists
-    const errorKey = `pool[${index}].${field}`;
-    if (errors[errorKey]) {
-      setErrors(prev => {
-        const newErrors = { ...prev };
-        delete newErrors[errorKey];
-        return newErrors;
-      });
-    }
-  };
-  
-  // Add a new pool member
-  const addPoolMember = () => {
-    setFormData(prev => ({
-      ...prev,
-      pool: [...prev.pool, { ...defaultPoolMember }]
-    }));
-  };
-  
-  // Remove a pool member
-  const removePoolMember = (index: number) => {
-    if (formData.pool.length <= 1) {
-      alertApi.post({
-        message: 'At least one pool member is required',
-        severity: 'warning'
-      });
-      return;
+    if (!vipFqdn) {
+      errors.vipFqdn = 'FQDN is required';
+    } else if (!/^[a-zA-Z0-9][a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(vipFqdn)) {
+      errors.vipFqdn = 'Invalid FQDN format';
     }
     
-    setFormData(prev => {
-      const newPool = [...prev.pool];
-      newPool.splice(index, 1);
-      return {
-        ...prev,
-        pool: newPool
-      };
-    });
-    
-    // Clear any errors for this pool member
-    setErrors(prev => {
-      const newErrors = { ...prev };
-      Object.keys(newErrors).forEach(key => {
-        if (key.startsWith(`pool[${index}]`)) {
-          delete newErrors[key];
-        }
-      });
-      return newErrors;
-    });
-  };
-  
-  // Validate the form
-  const validateForm = (): boolean => {
-    const newErrors: Record<string, string> = {};
-    
-    // Required fields
-    if (!formData.vip_fqdn) newErrors['vip_fqdn'] = 'FQDN is required';
-    if (!formData.app_id) newErrors['app_id'] = 'App ID is required';
-    if (!formData.primary_contact_email) newErrors['primary_contact_email'] = 'Primary contact email is required';
-    if (!formData.owner) newErrors['owner'] = 'Owner is required';
-    
-    // Email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (formData.primary_contact_email && !emailRegex.test(formData.primary_contact_email)) {
-      newErrors['primary_contact_email'] = 'Invalid email format';
-    }
-    if (formData.secondary_contact_email && !emailRegex.test(formData.secondary_contact_email)) {
-      newErrors['secondary_contact_email'] = 'Invalid email format';
-    }
-    if (formData.team_distribution_email && !emailRegex.test(formData.team_distribution_email)) {
-      newErrors['team_distribution_email'] = 'Invalid email format';
+    if (!vipIp) {
+      errors.vipIp = 'IP Address is required';
+    } else if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(vipIp)) {
+      errors.vipIp = 'Invalid IP Address format';
     }
     
-    // FQDN validation
-    const fqdnRegex = /^(?=.{1,253}$)((?!-)[A-Za-z0-9-]{1,63}(?<!-)\.)+[A-Za-z]{2,}$/;
-    if (formData.vip_fqdn && !fqdnRegex.test(formData.vip_fqdn)) {
-      newErrors['vip_fqdn'] = 'Invalid FQDN format';
-    }
-    
-    // IP validation (optional)
-    const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
-    if (formData.vip_ip && !ipRegex.test(formData.vip_ip)) {
-      newErrors['vip_ip'] = 'Invalid IP format';
-    }
-    
-    // Port validation
-    if (formData.port <= 0 || formData.port > 65535) {
-      newErrors['port'] = 'Port must be between 1 and 65535';
-    }
-    
-    // Monitor validation
-    if (formData.monitor.port <= 0 || formData.monitor.port > 65535) {
-      newErrors['monitor.port'] = 'Monitor port must be between 1 and 65535';
-    }
-    
-    // Persistence timeout validation
-    if (formData.persistence && formData.persistence.timeout < 0) {
-      newErrors['persistence.timeout'] = 'Timeout must be a positive number';
-    }
-    
-    // Pool members validation
-    formData.pool.forEach((member, index) => {
-      if (!member.ip) {
-        newErrors[`pool[${index}].ip`] = 'IP is required';
-      } else if (!ipRegex.test(member.ip)) {
-        newErrors[`pool[${index}].ip`] = 'Invalid IP format';
-      }
-      
-      if (member.port <= 0 || member.port > 65535) {
-        newErrors[`pool[${index}].port`] = 'Port must be between 1 and 65535';
-      }
-    });
-    
-    // ServiceNow Incident ID validation
-    if (!incidentId) {
-      setIncidentIdError('ServiceNow Incident ID is required');
-      return false;
+    if (!port) {
+      errors.port = 'Port is required';
     } else {
-      setIncidentIdError('');
+      const portNum = parseInt(port, 10);
+      if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+        errors.port = 'Port must be between 1 and 65535';
+      }
     }
     
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    if (!protocol) {
+      errors.protocol = 'Protocol is required';
+    }
+    
+    if (!environment) {
+      errors.environment = 'Environment is required';
+    }
+    
+    if (!datacenter) {
+      errors.datacenter = 'Datacenter is required';
+    }
+    
+    if (!appId) {
+      errors.appId = 'App ID is required';
+    }
+    
+    if (!owner) {
+      errors.owner = 'Owner is required';
+    }
+    
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
   };
-  
-  // Handle form submission
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     
     if (!validateForm()) {
-      alertApi.post({
-        message: 'Please fix the errors in the form',
-        severity: 'error'
-      });
+      alertApi.post({ message: 'Please fix the form errors before submitting', severity: 'error' });
       return;
     }
     
     try {
-      setLoading(true);
+      setSaving(true);
       
-      // Get the token from localStorage (set during login)
-      const token = localStorage.getItem('auth_token');
+      // Get token from localStorage
+      const token = localStorage.getItem(TOKEN_STORAGE_KEY);
       if (!token) {
-        alertApi.post({
-          message: 'Authentication token not found. Please log in again.',
-          severity: 'error'
-        });
-        navigate('/');
-        return;
+        setLoginOpen(true);
+        throw new Error('Authentication required. Please login.');
       }
       
-      // Create the VIP
-      const result = await lbaasApi.createVip(formData, incidentId, token);
+      // Prepare VIP data
+      const newVip: Partial<Vip> = {
+        vip_fqdn: vipFqdn,
+        vip_ip: vipIp,
+        port: parseInt(port, 10),
+        protocol,
+        environment,
+        datacenter,
+        app_id: appId,
+        owner,
+        status,
+      };
       
-      if (result.success) {
-        alertApi.post({
-          message: result.message || 'VIP created successfully',
-          severity: 'success'
-        });
-        navigate('/');
-      } else {
-        alertApi.post({
-          message: result.message || 'Failed to create VIP',
-          severity: 'error'
-        });
-      }
+      // Create VIP
+      await lbaasApi.createVip(newVip, token);
+      
+      alertApi.post({ message: 'VIP created successfully', severity: 'success' });
+      
+      // Navigate back to VIP list
+      navigateToMainPage();
     } catch (e: any) {
-      alertApi.post({
-        message: `Error creating VIP: ${e.message}`,
-        severity: 'error'
-      });
+      console.error('Error creating VIP:', e);
+      alertApi.post({ message: `Error: ${e.message}`, severity: 'error' });
+      
+      // If authentication error, redirect to main page for login
+      if (e.message.includes('Authentication') || e.message.includes('login')) {
+        navigateToMainPage();
+      }
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
-  
+
+  if (loginOpen) {
+    return (
+      <Page themeId="tool">
+        <Header title="Create VIP" subtitle="Create a New Load Balancer VIP" />
+        <Content>
+          <Grid container spacing={3} justifyContent="center">
+            <Grid item xs={12} sm={8} md={6} lg={4}>
+              <InfoCard title="Authentication Required">
+                <Typography>You need to login to create a VIP.</Typography>
+                <Button 
+                  variant="contained" 
+                  color="primary" 
+                  onClick={navigateToMainPage}
+                  style={{ marginTop: 16 }}
+                >
+                  Go to Login
+                </Button>
+              </InfoCard>
+            </Grid>
+          </Grid>
+        </Content>
+      </Page>
+    );
+  }
+
   return (
     <Page themeId="tool">
-      <Header title="Create New VIP" subtitle="Add a new Load Balancer Virtual IP Address" />
+      <Header title="Create VIP" subtitle="Create a New Load Balancer VIP" />
       <Content>
-        <ContentHeader title="VIP Details">
+        <ContentHeader title="Create New VIP">
           <Button
-            variant="text"
-            color="primary"
-            component={RouterLink}
-            to="/"
+            variant="contained"
+            color="default"
+            onClick={navigateToMainPage}
+            startIcon={<ArrowBack />}
           >
-            Back to VIP List
+            Cancel
           </Button>
-          <SupportButton>Fill out this form to create a new VIP.</SupportButton>
+          <SupportButton>Create a new Virtual IP Address for your load balancer.</SupportButton>
         </ContentHeader>
-        
-        <Grid container spacing={3}>
-          <Grid item xs={12}>
-            <Paper>
-              <form onSubmit={handleSubmit}>
-                <Grid container spacing={3} padding={3}>
-                  {/* Basic Information */}
-                  <Grid item xs={12}>
-                    <Typography variant="h6">Basic Information</Typography>
-                    <Divider />
-                  </Grid>
-                  
+        <form onSubmit={handleSubmit}>
+          <Grid container spacing={3}>
+            <Grid item xs={12}>
+              <InfoCard title="Basic Information">
+                <Grid container spacing={3}>
                   <Grid item xs={12} md={6}>
                     <TextField
                       fullWidth
-                      label="VIP FQDN"
-                      value={formData.vip_fqdn}
-                      onChange={(e) => handleChange('vip_fqdn', e.target.value)}
-                      error={!!errors.vip_fqdn}
-                      helperText={errors.vip_fqdn}
+                      label="FQDN"
+                      value={vipFqdn}
+                      onChange={(e) => setVipFqdn(e.target.value)}
+                      margin="normal"
+                      variant="outlined"
                       required
+                      error={!!formErrors.vipFqdn}
+                      helperText={formErrors.vipFqdn || "e.g., app.example.com"}
+                      placeholder="app.example.com"
                     />
                   </Grid>
-                  
                   <Grid item xs={12} md={6}>
                     <TextField
                       fullWidth
-                      label="VIP IP Address (Optional)"
-                      value={formData.vip_ip || ''}
-                      onChange={(e) => handleChange('vip_ip', e.target.value)}
-                      error={!!errors.vip_ip}
-                      helperText={errors.vip_ip}
+                      label="IP Address"
+                      value={vipIp}
+                      onChange={(e) => setVipIp(e.target.value)}
+                      margin="normal"
+                      variant="outlined"
+                      required
+                      error={!!formErrors.vipIp}
+                      helperText={formErrors.vipIp || "e.g., 192.168.1.10"}
+                      placeholder="192.168.1.10"
                     />
                   </Grid>
-                  
-                  <Grid item xs={12} md={4}>
+                  <Grid item xs={12} md={6}>
                     <TextField
                       fullWidth
                       label="Port"
-                      type="number"
-                      value={formData.port}
-                      onChange={(e) => handleChange('port', parseInt(e.target.value))}
-                      error={!!errors.port}
-                      helperText={errors.port}
+                      value={port}
+                      onChange={(e) => setPort(e.target.value)}
+                      margin="normal"
+                      variant="outlined"
                       required
+                      error={!!formErrors.port}
+                      helperText={formErrors.port || "Valid range: 1-65535"}
+                      placeholder="80"
                     />
                   </Grid>
-                  
-                  <Grid item xs={12} md={4}>
-                    <FormControl fullWidth error={!!errors.protocol}>
-                      <InputLabel>Protocol</InputLabel>
-                      <Select
-                        value={formData.protocol}
-                        onChange={(e) => handleChange('protocol', e.target.value)}
-                        label="Protocol"
-                        required
-                      >
-                        {protocols.map(protocol => (
-                          <MenuItem key={protocol} value={protocol}>
-                            {protocol.toUpperCase()}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                      {errors.protocol && <FormHelperText>{errors.protocol}</FormHelperText>}
-                    </FormControl>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      select
+                      label="Protocol"
+                      value={protocol}
+                      onChange={(e) => setProtocol(e.target.value)}
+                      margin="normal"
+                      variant="outlined"
+                      required
+                      error={!!formErrors.protocol}
+                      helperText={formErrors.protocol}
+                    >
+                      <MenuItem value="HTTP">HTTP</MenuItem>
+                      <MenuItem value="HTTPS">HTTPS</MenuItem>
+                      <MenuItem value="TCP">TCP</MenuItem>
+                      <MenuItem value="UDP">UDP</MenuItem>
+                    </TextField>
                   </Grid>
-                  
-                  <Grid item xs={12} md={4}>
-                    <FormControl fullWidth error={!!errors.lb_method}>
-                      <InputLabel>Load Balancing Method</InputLabel>
-                      <Select
-                        value={formData.lb_method}
-                        onChange={(e) => handleChange('lb_method', e.target.value)}
-                        label="Load Balancing Method"
-                        required
-                      >
-                        {lbMethods.map(method => (
-                          <MenuItem key={method} value={method}>
-                            {method.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                      {errors.lb_method && <FormHelperText>{errors.lb_method}</FormHelperText>}
-                    </FormControl>
+                </Grid>
+              </InfoCard>
+            </Grid>
+            
+            <Grid item xs={12}>
+              <InfoCard title="Environment Information">
+                <Grid container spacing={3}>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      select
+                      label="Environment"
+                      value={environment}
+                      onChange={(e) => setEnvironment(e.target.value)}
+                      margin="normal"
+                      variant="outlined"
+                      required
+                      error={!!formErrors.environment}
+                      helperText={formErrors.environment}
+                    >
+                      <MenuItem value="production">Production</MenuItem>
+                      <MenuItem value="staging">Staging</MenuItem>
+                      <MenuItem value="development">Development</MenuItem>
+                      <MenuItem value="test">Test</MenuItem>
+                    </TextField>
                   </Grid>
-                  
-                  <Grid item xs={12} md={4}>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      select
+                      label="Datacenter"
+                      value={datacenter}
+                      onChange={(e) => setDatacenter(e.target.value)}
+                      margin="normal"
+                      variant="outlined"
+                      required
+                      error={!!formErrors.datacenter}
+                      helperText={formErrors.datacenter}
+                    >
+                      <MenuItem value="dc1">DC1</MenuItem>
+                      <MenuItem value="dc2">DC2</MenuItem>
+                      <MenuItem value="dc3">DC3</MenuItem>
+                    </TextField>
+                  </Grid>
+                  <Grid item xs={12} md={6}>
                     <TextField
                       fullWidth
                       label="App ID"
-                      value={formData.app_id}
-                      onChange={(e) => handleChange('app_id', e.target.value)}
-                      error={!!errors.app_id}
-                      helperText={errors.app_id}
+                      value={appId}
+                      onChange={(e) => setAppId(e.target.value)}
+                      margin="normal"
+                      variant="outlined"
                       required
+                      error={!!formErrors.appId}
+                      helperText={formErrors.appId || "Application identifier"}
+                      placeholder="app-123"
                     />
                   </Grid>
-                  
-                  <Grid item xs={12} md={4}>
-                    <FormControl fullWidth error={!!errors.environment}>
-                      <InputLabel>Environment</InputLabel>
-                      <Select
-                        value={formData.environment}
-                        onChange={(e) => handleChange('environment', e.target.value)}
-                        label="Environment"
-                        required
-                      >
-                        {environments.map(env => (
-                          <MenuItem key={env} value={env}>
-                            {env.charAt(0).toUpperCase() + env.slice(1)}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                      {errors.environment && <FormHelperText>{errors.environment}</FormHelperText>}
-                    </FormControl>
-                  </Grid>
-                  
-                  <Grid item xs={12} md={4}>
-                    <FormControl fullWidth error={!!errors.datacenter}>
-                      <InputLabel>Datacenter</InputLabel>
-                      <Select
-                        value={formData.datacenter}
-                        onChange={(e) => handleChange('datacenter', e.target.value)}
-                        label="Datacenter"
-                        required
-                      >
-                        {datacenters.map(dc => (
-                          <MenuItem key={dc} value={dc}>
-                            {dc.toUpperCase()}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                      {errors.datacenter && <FormHelperText>{errors.datacenter}</FormHelperText>}
-                    </FormControl>
-                  </Grid>
-                  
                   <Grid item xs={12} md={6}>
                     <TextField
                       fullWidth
                       label="Owner"
-                      value={formData.owner}
-                      onChange={(e) => handleChange('owner', e.target.value)}
-                      error={!!errors.owner}
-                      helperText={errors.owner}
+                      value={owner}
+                      onChange={(e) => setOwner(e.target.value)}
+                      margin="normal"
+                      variant="outlined"
                       required
+                      error={!!formErrors.owner}
+                      helperText={formErrors.owner || "Team or individual responsible"}
+                      placeholder="platform-team"
                     />
                   </Grid>
-                  
-                  {/* Contact Information */}
-                  <Grid item xs={12}>
-                    <Typography variant="h6" style={{ marginTop: 16 }}>Contact Information</Typography>
-                    <Divider />
-                  </Grid>
-                  
-                  <Grid item xs={12} md={4}>
-                    <TextField
-                      fullWidth
-                      label="Primary Contact Email"
-                      value={formData.primary_contact_email}
-                      onChange={(e) => handleChange('primary_contact_email', e.target.value)}
-                      error={!!errors.primary_contact_email}
-                      helperText={errors.primary_contact_email}
-                      required
-                    />
-                  </Grid>
-                  
-                  <Grid item xs={12} md={4}>
-                    <TextField
-                      fullWidth
-                      label="Secondary Contact Email (Optional)"
-                      value={formData.secondary_contact_email || ''}
-                      onChange={(e) => handleChange('secondary_contact_email', e.target.value)}
-                      error={!!errors.secondary_contact_email}
-                      helperText={errors.secondary_contact_email}
-                    />
-                  </Grid>
-                  
-                  <Grid item xs={12} md={4}>
-                    <TextField
-                      fullWidth
-                      label="Team Distribution Email (Optional)"
-                      value={formData.team_distribution_email || ''}
-                      onChange={(e) => handleChange('team_distribution_email', e.target.value)}
-                      error={!!errors.team_distribution_email}
-                      helperText={errors.team_distribution_email}
-                    />
-                  </Grid>
-                  
-                  {/* SSL Configuration */}
-                  <Grid item xs={12}>
-                    <Typography variant="h6" style={{ marginTop: 16 }}>SSL Configuration (Optional)</Typography>
-                    <Divider />
-                  </Grid>
-                  
                   <Grid item xs={12} md={6}>
                     <TextField
                       fullWidth
-                      label="SSL Certificate Name"
-                      value={formData.ssl_cert_name || ''}
-                      onChange={(e) => handleChange('ssl_cert_name', e.target.value)}
-                      error={!!errors.ssl_cert_name}
-                      helperText={errors.ssl_cert_name}
-                    />
-                  </Grid>
-                  
-                  <Grid item xs={12} md={6}>
-                    <TextField
-                      fullWidth
-                      label="mTLS CA Certificate Name"
-                      value={formData.mtls_ca_cert_name || ''}
-                      onChange={(e) => handleChange('mtls_ca_cert_name', e.target.value)}
-                      error={!!errors.mtls_ca_cert_name}
-                      helperText={errors.mtls_ca_cert_name}
-                    />
-                  </Grid>
-                  
-                  {/* Health Monitor */}
-                  <Grid item xs={12}>
-                    <Typography variant="h6" style={{ marginTop: 16 }}>Health Monitor</Typography>
-                    <Divider />
-                  </Grid>
-                  
-                  <Grid item xs={12} md={4}>
-                    <FormControl fullWidth error={!!errors['monitor.type']}>
-                      <InputLabel>Monitor Type</InputLabel>
-                      <Select
-                        value={formData.monitor.type}
-                        onChange={(e) => handleNestedChange('monitor', 'type', e.target.value)}
-                        label="Monitor Type"
-                        required
-                      >
-                        {monitorTypes.map(type => (
-                          <MenuItem key={type} value={type}>
-                            {type.toUpperCase()}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                      {errors['monitor.type'] && <FormHelperText>{errors['monitor.type']}</FormHelperText>}
-                    </FormControl>
-                  </Grid>
-                  
-                  <Grid item xs={12} md={4}>
-                    <TextField
-                      fullWidth
-                      label="Monitor Port"
-                      type="number"
-                      value={formData.monitor.port}
-                      onChange={(e) => handleNestedChange('monitor', 'port', parseInt(e.target.value))}
-                      error={!!errors['monitor.port']}
-                      helperText={errors['monitor.port']}
+                      select
+                      label="Status"
+                      value={status}
+                      onChange={(e) => setStatus(e.target.value)}
+                      margin="normal"
+                      variant="outlined"
                       required
-                    />
-                  </Grid>
-                  
-                  {(formData.monitor.type === 'http' || formData.monitor.type === 'https') && (
-                    <>
-                      <Grid item xs={12} md={6}>
-                        <TextField
-                          fullWidth
-                          label="Send String"
-                          value={formData.monitor.send || ''}
-                          onChange={(e) => handleNestedChange('monitor', 'send', e.target.value)}
-                          error={!!errors['monitor.send']}
-                          helperText={errors['monitor.send'] || 'e.g., GET /health HTTP/1.1\\r\\nHost: example.com\\r\\n\\r\\n'}
-                        />
-                      </Grid>
-                      
-                      <Grid item xs={12} md={6}>
-                        <TextField
-                          fullWidth
-                          label="Receive String"
-                          value={formData.monitor.receive || ''}
-                          onChange={(e) => handleNestedChange('monitor', 'receive', e.target.value)}
-                          error={!!errors['monitor.receive']}
-                          helperText={errors['monitor.receive'] || 'e.g., 200 OK or HTTP/1.1 200'}
-                        />
-                      </Grid>
-                    </>
-                  )}
-                  
-                  {/* Persistence */}
-                  <Grid item xs={12}>
-                    <Typography variant="h6" style={{ marginTop: 16 }}>Persistence (Optional)</Typography>
-                    <Divider />
-                  </Grid>
-                  
-                  <Grid item xs={12} md={6}>
-                    <FormControl fullWidth error={!!errors['persistence.type']}>
-                      <InputLabel>Persistence Type</InputLabel>
-                      <Select
-                        value={formData.persistence?.type || 'none'}
-                        onChange={(e) => {
-                          if (e.target.value === 'none') {
-                            handleChange('persistence', undefined);
-                          } else {
-                            handleNestedChange('persistence', 'type', e.target.value);
-                          }
-                        }}
-                        label="Persistence Type"
-                      >
-                        {persistenceTypes.map(type => (
-                          <MenuItem key={type} value={type}>
-                            {type === 'none' ? 'None' : type.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                      {errors['persistence.type'] && <FormHelperText>{errors['persistence.type']}</FormHelperText>}
-                    </FormControl>
-                  </Grid>
-                  
-                  {formData.persistence && formData.persistence.type !== 'none' && (
-                    <Grid item xs={12} md={6}>
-                      <TextField
-                        fullWidth
-                        label="Timeout (seconds)"
-                        type="number"
-                        value={formData.persistence.timeout}
-                        onChange={(e) => handleNestedChange('persistence', 'timeout', parseInt(e.target.value))}
-                        error={!!errors['persistence.timeout']}
-                        helperText={errors['persistence.timeout']}
-                      />
-                    </Grid>
-                  )}
-                  
-                  {/* Pool Members */}
-                  <Grid item xs={12}>
-                    <Typography variant="h6" style={{ marginTop: 16 }}>Pool Members</Typography>
-                    <Divider />
-                  </Grid>
-                  
-                  {formData.pool.map((member, index) => (
-                    <React.Fragment key={index}>
-                      <Grid item xs={12}>
-                        <Grid container spacing={2} alignItems="center">
-                          <Grid item xs={12} md={5}>
-                            <TextField
-                              fullWidth
-                              label={`Pool Member ${index + 1} IP`}
-                              value={member.ip}
-                              onChange={(e) => handlePoolMemberChange(index, 'ip', e.target.value)}
-                              error={!!errors[`pool[${index}].ip`]}
-                              helperText={errors[`pool[${index}].ip`]}
-                              required
-                            />
-                          </Grid>
-                          
-                          <Grid item xs={12} md={5}>
-                            <TextField
-                              fullWidth
-                              label={`Pool Member ${index + 1} Port`}
-                              type="number"
-                              value={member.port}
-                              onChange={(e) => handlePoolMemberChange(index, 'port', parseInt(e.target.value))}
-                              error={!!errors[`pool[${index}].port`]}
-                              helperText={errors[`pool[${index}].port`]}
-                              required
-                            />
-                          </Grid>
-                          
-                          <Grid item xs={12} md={2}>
-                            <Tooltip title="Remove Pool Member">
-                              <IconButton 
-                                color="secondary" 
-                                onClick={() => removePoolMember(index)}
-                                disabled={formData.pool.length <= 1}
-                              >
-                                <RemoveIcon />
-                              </IconButton>
-                            </Tooltip>
-                          </Grid>
-                        </Grid>
-                      </Grid>
-                    </React.Fragment>
-                  ))}
-                  
-                  <Grid item xs={12}>
-                    <Button
-                      startIcon={<AddIcon />}
-                      onClick={addPoolMember}
-                      color="primary"
+                      error={!!formErrors.status}
+                      helperText={formErrors.status || "Initial status for the VIP"}
                     >
-                      Add Pool Member
-                    </Button>
-                  </Grid>
-                  
-                  {/* ServiceNow Incident ID */}
-                  <Grid item xs={12}>
-                    <Typography variant="h6" style={{ marginTop: 16 }}>ServiceNow Information</Typography>
-                    <Divider />
-                  </Grid>
-                  
-                  <Grid item xs={12}>
-                    <TextField
-                      fullWidth
-                      label="ServiceNow Incident ID"
-                      value={incidentId}
-                      onChange={(e) => setIncidentId(e.target.value)}
-                      error={!!incidentIdError}
-                      helperText={incidentIdError || 'Required for tracking and approval purposes'}
-                      required
-                    />
-                  </Grid>
-                  
-                  {/* Submit Button */}
-                  <Grid item xs={12} style={{ marginTop: 16 }}>
-                    <Button
-                      type="submit"
-                      variant="contained"
-                      color="primary"
-                      disabled={loading}
-                      size="large"
-                    >
-                      {loading ? <CircularProgress size={24} /> : 'Create VIP'}
-                    </Button>
-                    <Button
-                      variant="text"
-                      component={RouterLink}
-                      to="/"
-                      style={{ marginLeft: 16 }}
-                    >
-                      Cancel
-                    </Button>
+                      <MenuItem value="pending">Pending</MenuItem>
+                      <MenuItem value="building">Building</MenuItem>
+                      <MenuItem value="active">Active</MenuItem>
+                      <MenuItem value="inactive">Inactive</MenuItem>
+                    </TextField>
                   </Grid>
                 </Grid>
-              </form>
-            </Paper>
+              </InfoCard>
+            </Grid>
+            
+            <Grid item xs={12}>
+              <Grid container justifyContent="flex-end" spacing={2}>
+                <Grid item>
+                  <Button
+                    variant="contained"
+                    color="default"
+                    onClick={navigateToMainPage}
+                  >
+                    Cancel
+                  </Button>
+                </Grid>
+                <Grid item>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    type="submit"
+                    disabled={saving}
+                    startIcon={saving ? <CircularProgress size={20} /> : <Save />}
+                  >
+                    {saving ? 'Creating...' : 'Create VIP'}
+                  </Button>
+                </Grid>
+              </Grid>
+            </Grid>
           </Grid>
-        </Grid>
+        </form>
       </Content>
     </Page>
   );

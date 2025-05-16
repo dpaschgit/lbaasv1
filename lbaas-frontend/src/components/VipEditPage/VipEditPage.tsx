@@ -1,164 +1,294 @@
-import React, { useEffect, useState } from 'react';
-import { Typography, Grid, Button, CircularProgress, TextField, Paper, Select, MenuItem, FormControl, InputLabel, Dialog, DialogActions, DialogContent, DialogContentText } from '@material-ui/core';
-import { Link as RouterLink, useParams, useNavigate } from 'react-router-dom';
-import { ArrowBack } from '@material-ui/icons';
+import React, { useEffect, useState, FormEvent } from 'react';
+import { Typography, Grid, Button, CircularProgress, TextField, MenuItem, Paper } from '@material-ui/core';
+import { ArrowBack, Save } from '@material-ui/icons';
 import {
+  InfoCard,
   Header,
   Page,
   Content,
   ContentHeader,
   SupportButton,
 } from '@backstage/core-components';
-import { useApi, alertApiRef, identityApiRef } from '@backstage/core-plugin-api';
+import { useApi, alertApiRef } from '@backstage/core-plugin-api';
+import { lbaasFrontendApiRef, Vip } from '../../api';
 
-// Placeholder for actual VipData structure from your models.py
-interface VipEditData {
-  id: string;
-  vip_fqdn: string;
-  vip_ip?: string; // IP might not be editable, or fetched from IPAM
-  port: number;
-  protocol: string;
-  environment: string;
-  datacenter: string;
-  app_id: string;
-  // Add all other editable fields from VipDB model
-  // e.g., pool_members, monitor, persistence
-}
-
-// Mocked API call to fetch a single VIP's details for editing
-const mockFetchVipForEdit = async (vipId: string, authToken: string): Promise<VipEditData | null> => {
-  console.log(`Fetching VIP for edit: ${vipId} with token: ${authToken ? 'Token Present' : 'No Token'}`);
-  await new Promise(resolve => setTimeout(resolve, 700));
-  // Return a mock object similar to what VipViewPage fetches, but perhaps only editable fields
-  const mockVip: VipEditData = {
-    id: vipId,
-    vip_fqdn: 'app1.prod.ladc.davelab.net',
-    vip_ip: '10.1.1.101', // May or may not be editable
-    port: 443,
-    protocol: 'HTTPS',
-    environment: 'Prod',
-    datacenter: 'LADC',
-    app_id: 'APP001',
-    // ... other fields
-  };
-  if (vipId === '65f1c3b3e4b0f8a7b0a3b3e1') return mockVip;
-  return null;
-};
-
-// Mocked API call to update a VIP
-const mockUpdateVip = async (vipId: string, vipData: any, incidentId: string, authToken: string) => {
-  console.log('Updating VIP:', vipId, 'with data:', vipData, 'Incident:', incidentId, 'Token:', authToken ? 'Present' : 'No Token');
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  if (incidentId === 'valid_incident_for_update' && vipData.vip_fqdn) {
-    return { success: true, message: `VIP ${vipData.vip_fqdn} updated successfully.` };
-  }
-  return { success: false, message: 'Failed to update VIP. Invalid incident ID or missing FQDN.' };
-};
+// Token storage key - must match the one in api.ts
+const TOKEN_STORAGE_KEY = 'lbaas_auth_token';
 
 export const VipEditPage = () => {
-  const { vipId } = useParams<{ vipId: string }>();
   const alertApi = useApi(alertApiRef);
-  const identityApi = useApi(identityApiRef);
-  const navigate = useNavigate();
+  const lbaasApi = useApi(lbaasFrontendApiRef);
+  
+  const [vip, setVip] = useState<Vip | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const [formData, setFormData] = useState<Partial<VipEditData>>({});
-  const [incidentId, setIncidentId] = useState('');
-  const [showIncidentDialog, setShowIncidentDialog] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  
+  // Form fields
+  const [vipFqdn, setVipFqdn] = useState('');
+  const [vipIp, setVipIp] = useState('');
+  const [port, setPort] = useState('');
+  const [protocol, setProtocol] = useState('');
+  const [environment, setEnvironment] = useState('');
+  const [datacenter, setDatacenter] = useState('');
+  const [appId, setAppId] = useState('');
+  const [owner, setOwner] = useState('');
+  const [status, setStatus] = useState('');
 
   useEffect(() => {
-    const fetchData = async () => {
-      if (!vipId) {
-        setError(new Error('VIP ID not found in URL.'));
-        setLoading(false);
-        return;
-      }
+    const fetchVipDetails = async () => {
       try {
         setLoading(true);
-        const token = await identityApi.getCredentials();
-        const data = await mockFetchVipForEdit(vipId, token?.token || '');
-        if (data) {
-          setFormData(data);
-        } else {
-          setError(new Error(`VIP with ID ${vipId} not found for editing.`));
-          alertApi.post({ message: `VIP with ID ${vipId} not found.`, severity: 'error' });
+        
+        // Get VIP ID from URL
+        const pathParts = window.location.pathname.split('/');
+        const vipId = pathParts[pathParts.length - 2]; // Format: /lbaas-frontend/:vipId/edit
+        
+        if (!vipId) {
+          throw new Error('VIP ID not found in URL');
         }
+        
+        console.log(`Fetching details for VIP ID: ${vipId}`);
+        
+        // Get token from localStorage
+        const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+        if (!token) {
+          setLoginOpen(true);
+          throw new Error('Authentication required. Please login.');
+        }
+        
+        // Fetch VIP details
+        const vipData = await lbaasApi.getVip(vipId, token);
+        setVip(vipData);
+        
+        // Populate form fields
+        setVipFqdn(vipData.vip_fqdn || '');
+        setVipIp(vipData.vip_ip || '');
+        setPort(vipData.port?.toString() || '');
+        setProtocol(vipData.protocol || '');
+        setEnvironment(vipData.environment || '');
+        setDatacenter(vipData.datacenter || '');
+        setAppId(vipData.app_id || '');
+        setOwner(vipData.owner || '');
+        setStatus(vipData.status || '');
       } catch (e: any) {
+        console.error('Error fetching VIP details:', e);
         setError(e);
-        alertApi.post({ message: `Error fetching VIP details for edit: ${e.message}`, severity: 'error' });
+        alertApi.post({ message: `Error: ${e.message}`, severity: 'error' });
+        
+        // If authentication error, redirect to main page for login
+        if (e.message.includes('Authentication') || e.message.includes('login')) {
+          navigateToMainPage();
+        }
       } finally {
         setLoading(false);
       }
     };
-    fetchData();
-  }, [vipId, alertApi, identityApi]);
+    
+    fetchVipDetails();
+  }, []);
 
-  const handleChange = (event: React.ChangeEvent<{ name?: string; value: unknown }>) => {
-    const name = event.target.name as keyof VipEditData;
-    setFormData({
-      ...formData,
-      [name]: event.target.value,
-    });
-  };
-  
-  const handleNumericChange = (event: React.ChangeEvent<{ name?: string; value: unknown }>) => {
-    const name = event.target.name as keyof VipEditData;
-    const value = event.target.value as string;
-    setFormData({
-      ...formData,
-      [name]: value === '' ? '' : Number(value),
-    });
-  };
-
-  const handleSubmitPrompt = () => {
-    if (!formData.vip_fqdn || !formData.app_id) {
-      alertApi.post({ message: 'VIP FQDN and App ID are required.', severity: 'error' });
-      return;
-    }
-    setShowIncidentDialog(true);
-  };
-
-  const handleUpdateVip = async () => {
-    if (!vipId || !incidentId.trim()) {
-      alertApi.post({ message: 'ServiceNow Incident ID is required.', severity: 'error' });
-      return;
-    }
-    setSaving(true);
+  const navigateToMainPage = () => {
     try {
-      const token = await identityApi.getCredentials();
-      const vipPayload = {
-        ...formData,
-        servicenow_incident_id: incidentId.trim(),
-      };
-      const result = await mockUpdateVip(vipId, vipPayload, incidentId.trim(), token?.token || '');
-      if (result.success) {
-        alertApi.post({ message: result.message, severity: 'success' });
-        navigate(`/lbaas-frontend/${vipId}/view`); // Navigate to view page after edit
-      } else {
-        alertApi.post({ message: result.message, severity: 'error' });
-      }
-    } catch (e: any) {
-      alertApi.post({ message: `Error updating VIP: ${e.message}`, severity: 'error' });
+      const currentUrl = window.location.href;
+      const baseUrl = currentUrl.split('/lbaas-frontend')[0];
+      window.location.href = `${baseUrl}/lbaas-frontend`;
+    } catch (error) {
+      console.error('Navigation error:', error);
     }
-    setSaving(false);
-    setShowIncidentDialog(false);
-    setIncidentId('');
   };
+
+  const validateForm = () => {
+    const errors: Record<string, string> = {};
+    
+    if (!vipFqdn) {
+      errors.vipFqdn = 'FQDN is required';
+    } else if (!/^[a-zA-Z0-9][a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(vipFqdn)) {
+      errors.vipFqdn = 'Invalid FQDN format';
+    }
+    
+    if (!vipIp) {
+      errors.vipIp = 'IP Address is required';
+    } else if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(vipIp)) {
+      errors.vipIp = 'Invalid IP Address format';
+    }
+    
+    if (!port) {
+      errors.port = 'Port is required';
+    } else {
+      const portNum = parseInt(port, 10);
+      if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+        errors.port = 'Port must be between 1 and 65535';
+      }
+    }
+    
+    if (!protocol) {
+      errors.protocol = 'Protocol is required';
+    }
+    
+    if (!environment) {
+      errors.environment = 'Environment is required';
+    }
+    
+    if (!datacenter) {
+      errors.datacenter = 'Datacenter is required';
+    }
+    
+    if (!appId) {
+      errors.appId = 'App ID is required';
+    }
+    
+    if (!owner) {
+      errors.owner = 'Owner is required';
+    }
+    
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    
+    if (!validateForm()) {
+      alertApi.post({ message: 'Please fix the form errors before submitting', severity: 'error' });
+      return;
+    }
+    
+    if (!vip) {
+      alertApi.post({ message: 'VIP data not loaded', severity: 'error' });
+      return;
+    }
+    
+    try {
+      setSaving(true);
+      
+      // Get token from localStorage
+      const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+      if (!token) {
+        setLoginOpen(true);
+        throw new Error('Authentication required. Please login.');
+      }
+      
+      // Prepare updated VIP data
+      const updatedVip: Partial<Vip> = {
+        vip_fqdn: vipFqdn,
+        vip_ip: vipIp,
+        port: parseInt(port, 10),
+        protocol,
+        environment,
+        datacenter,
+        app_id: appId,
+        owner,
+        status,
+      };
+      
+      // Update VIP
+      await lbaasApi.updateVip(vip.id, updatedVip, token);
+      
+      alertApi.post({ message: 'VIP updated successfully', severity: 'success' });
+      
+      // Navigate back to VIP list
+      navigateToMainPage();
+    } catch (e: any) {
+      console.error('Error updating VIP:', e);
+      alertApi.post({ message: `Error: ${e.message}`, severity: 'error' });
+      
+      // If authentication error, redirect to main page for login
+      if (e.message.includes('Authentication') || e.message.includes('login')) {
+        navigateToMainPage();
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loginOpen) {
+    return (
+      <Page themeId="tool">
+        <Header title="Edit VIP" subtitle="Modify Load Balancer VIP Information" />
+        <Content>
+          <Grid container spacing={3} justifyContent="center">
+            <Grid item xs={12} sm={8} md={6} lg={4}>
+              <InfoCard title="Authentication Required">
+                <Typography>You need to login to edit VIP details.</Typography>
+                <Button 
+                  variant="contained" 
+                  color="primary" 
+                  onClick={navigateToMainPage}
+                  style={{ marginTop: 16 }}
+                >
+                  Go to Login
+                </Button>
+              </InfoCard>
+            </Grid>
+          </Grid>
+        </Content>
+      </Page>
+    );
+  }
 
   if (loading) {
-    return <CircularProgress />;
+    return (
+      <Page themeId="tool">
+        <Header title="Edit VIP" subtitle="Modify Load Balancer VIP Information" />
+        <Content>
+          <Grid container spacing={3} justifyContent="center" alignItems="center" style={{ height: '50vh' }}>
+            <Grid item>
+              <CircularProgress />
+            </Grid>
+          </Grid>
+        </Content>
+      </Page>
+    );
   }
 
   if (error) {
     return (
       <Page themeId="tool">
-        <Header title="Error" />
+        <Header title="Edit VIP" subtitle="Modify Load Balancer VIP Information" />
         <Content>
-          <Typography color="error">{error.message}</Typography>
-          <Button component={RouterLink} to="/lbaas-frontend" variant="outlined" style={{ marginTop: '20px' }}>
-            Back to VIP List
-          </Button>
+          <Grid container spacing={3} justifyContent="center">
+            <Grid item xs={12}>
+              <InfoCard title="Error">
+                <Typography color="error">Error loading VIP details: {error.message}</Typography>
+                <Button 
+                  variant="contained" 
+                  color="primary" 
+                  onClick={navigateToMainPage}
+                  style={{ marginTop: 16 }}
+                >
+                  Back to VIP List
+                </Button>
+              </InfoCard>
+            </Grid>
+          </Grid>
+        </Content>
+      </Page>
+    );
+  }
+
+  if (!vip) {
+    return (
+      <Page themeId="tool">
+        <Header title="Edit VIP" subtitle="Modify Load Balancer VIP Information" />
+        <Content>
+          <Grid container spacing={3} justifyContent="center">
+            <Grid item xs={12}>
+              <InfoCard title="Not Found">
+                <Typography>VIP not found or has been deleted.</Typography>
+                <Button 
+                  variant="contained" 
+                  color="primary" 
+                  onClick={navigateToMainPage}
+                  style={{ marginTop: 16 }}
+                >
+                  Back to VIP List
+                </Button>
+              </InfoCard>
+            </Grid>
+          </Grid>
         </Content>
       </Page>
     );
@@ -166,136 +296,203 @@ export const VipEditPage = () => {
 
   return (
     <Page themeId="tool">
-      <Header title={`Edit VIP: ${formData.vip_fqdn || ''}`} subtitle={`Application ID: ${formData.app_id || ''}`}>
-        <Button component={RouterLink} to={`/lbaas-frontend/${vipId}/view`} variant="outlined" startIcon={<ArrowBack />}>
-          Back to View VIP
-        </Button>
-      </Header>
+      <Header title="Edit VIP" subtitle="Modify Load Balancer VIP Information" />
       <Content>
-        <ContentHeader title="Modify VIP Configuration">
-          <SupportButton>Update the details for this VIP.</SupportButton>
+        <ContentHeader title={`Editing: ${vip.vip_fqdn || 'VIP'}`}>
+          <Button
+            variant="contained"
+            color="default"
+            onClick={navigateToMainPage}
+            startIcon={<ArrowBack />}
+          >
+            Cancel
+          </Button>
+          <SupportButton>Edit information about this VIP.</SupportButton>
         </ContentHeader>
-        <Grid container spacing={3} component={Paper} style={{ padding: '20px' }}>
-          <Grid item xs={12} sm={6}>
-            <TextField
-              required
-              name="vip_fqdn"
-              label="VIP FQDN"
-              fullWidth
-              value={formData.vip_fqdn || ''}
-              onChange={handleChange}
-            />
+        <form onSubmit={handleSubmit}>
+          <Grid container spacing={3}>
+            <Grid item xs={12}>
+              <InfoCard title="Basic Information">
+                <Grid container spacing={3}>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="FQDN"
+                      value={vipFqdn}
+                      onChange={(e) => setVipFqdn(e.target.value)}
+                      margin="normal"
+                      variant="outlined"
+                      required
+                      error={!!formErrors.vipFqdn}
+                      helperText={formErrors.vipFqdn}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="IP Address"
+                      value={vipIp}
+                      onChange={(e) => setVipIp(e.target.value)}
+                      margin="normal"
+                      variant="outlined"
+                      required
+                      error={!!formErrors.vipIp}
+                      helperText={formErrors.vipIp}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="Port"
+                      value={port}
+                      onChange={(e) => setPort(e.target.value)}
+                      margin="normal"
+                      variant="outlined"
+                      required
+                      error={!!formErrors.port}
+                      helperText={formErrors.port}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      select
+                      label="Protocol"
+                      value={protocol}
+                      onChange={(e) => setProtocol(e.target.value)}
+                      margin="normal"
+                      variant="outlined"
+                      required
+                      error={!!formErrors.protocol}
+                      helperText={formErrors.protocol}
+                    >
+                      <MenuItem value="HTTP">HTTP</MenuItem>
+                      <MenuItem value="HTTPS">HTTPS</MenuItem>
+                      <MenuItem value="TCP">TCP</MenuItem>
+                      <MenuItem value="UDP">UDP</MenuItem>
+                    </TextField>
+                  </Grid>
+                </Grid>
+              </InfoCard>
+            </Grid>
+            
+            <Grid item xs={12}>
+              <InfoCard title="Environment Information">
+                <Grid container spacing={3}>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      select
+                      label="Environment"
+                      value={environment}
+                      onChange={(e) => setEnvironment(e.target.value)}
+                      margin="normal"
+                      variant="outlined"
+                      required
+                      error={!!formErrors.environment}
+                      helperText={formErrors.environment}
+                    >
+                      <MenuItem value="production">Production</MenuItem>
+                      <MenuItem value="staging">Staging</MenuItem>
+                      <MenuItem value="development">Development</MenuItem>
+                      <MenuItem value="test">Test</MenuItem>
+                    </TextField>
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      select
+                      label="Datacenter"
+                      value={datacenter}
+                      onChange={(e) => setDatacenter(e.target.value)}
+                      margin="normal"
+                      variant="outlined"
+                      required
+                      error={!!formErrors.datacenter}
+                      helperText={formErrors.datacenter}
+                    >
+                      <MenuItem value="dc1">DC1</MenuItem>
+                      <MenuItem value="dc2">DC2</MenuItem>
+                      <MenuItem value="dc3">DC3</MenuItem>
+                    </TextField>
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="App ID"
+                      value={appId}
+                      onChange={(e) => setAppId(e.target.value)}
+                      margin="normal"
+                      variant="outlined"
+                      required
+                      error={!!formErrors.appId}
+                      helperText={formErrors.appId}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="Owner"
+                      value={owner}
+                      onChange={(e) => setOwner(e.target.value)}
+                      margin="normal"
+                      variant="outlined"
+                      required
+                      error={!!formErrors.owner}
+                      helperText={formErrors.owner}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      select
+                      label="Status"
+                      value={status}
+                      onChange={(e) => setStatus(e.target.value)}
+                      margin="normal"
+                      variant="outlined"
+                      required
+                      error={!!formErrors.status}
+                      helperText={formErrors.status}
+                    >
+                      <MenuItem value="active">Active</MenuItem>
+                      <MenuItem value="pending">Pending</MenuItem>
+                      <MenuItem value="building">Building</MenuItem>
+                      <MenuItem value="inactive">Inactive</MenuItem>
+                      <MenuItem value="error">Error</MenuItem>
+                    </TextField>
+                  </Grid>
+                </Grid>
+              </InfoCard>
+            </Grid>
+            
+            <Grid item xs={12}>
+              <Grid container justifyContent="flex-end" spacing={2}>
+                <Grid item>
+                  <Button
+                    variant="contained"
+                    color="default"
+                    onClick={navigateToMainPage}
+                  >
+                    Cancel
+                  </Button>
+                </Grid>
+                <Grid item>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    type="submit"
+                    disabled={saving}
+                    startIcon={saving ? <CircularProgress size={20} /> : <Save />}
+                  >
+                    {saving ? 'Saving...' : 'Save Changes'}
+                  </Button>
+                </Grid>
+              </Grid>
+            </Grid>
           </Grid>
-          <Grid item xs={12} sm={6}>
-            <TextField
-              required
-              name="app_id"
-              label="Application ID"
-              fullWidth
-              value={formData.app_id || ''}
-              onChange={handleChange}
-            />
-          </Grid>
-          <Grid item xs={12} sm={3}>
-            <FormControl fullWidth required>
-              <InputLabel id="environment-label">Environment</InputLabel>
-              <Select
-                labelId="environment-label"
-                name="environment"
-                value={formData.environment || 'DEV'}
-                onChange={handleChange}
-              >
-                <MenuItem value="DEV">DEV</MenuItem>
-                <MenuItem value="UAT">UAT</MenuItem>
-                <MenuItem value="PROD">PROD</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} sm={3}>
-            <FormControl fullWidth required>
-              <InputLabel id="datacenter-label">Datacenter</InputLabel>
-              <Select
-                labelId="datacenter-label"
-                name="datacenter"
-                value={formData.datacenter || 'LADC'}
-                onChange={handleChange}
-              >
-                <MenuItem value="LADC">LADC</MenuItem>
-                <MenuItem value="NYDC">NYDC</MenuItem>
-                <MenuItem value="UKDC">UKDC</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} sm={3}>
-            <TextField
-              required
-              name="port"
-              label="Port"
-              type="number"
-              fullWidth
-              value={formData.port || 0}
-              onChange={handleNumericChange}
-            />
-          </Grid>
-          <Grid item xs={12} sm={3}>
-            <FormControl fullWidth required>
-              <InputLabel id="protocol-label">Protocol</InputLabel>
-              <Select
-                labelId="protocol-label"
-                name="protocol"
-                value={formData.protocol || 'TCP'}
-                onChange={handleChange}
-              >
-                <MenuItem value="TCP">TCP</MenuItem>
-                <MenuItem value="UDP">UDP</MenuItem>
-                <MenuItem value="HTTP">HTTP</MenuItem>
-                <MenuItem value="HTTPS">HTTPS</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-          {/* Add more form fields here for pool_members, monitor, persistence etc. */}
-          {/* These would be pre-filled from formData and allow modification */}
-
-          <Grid item xs={12} style={{ marginTop: '20px' }}>
-            <Button
-              variant="contained"
-              color="primary"
-              onClick={handleSubmitPrompt}
-              disabled={saving || loading}
-            >
-              {saving ? <CircularProgress size={24} /> : 'Save Changes'}
-            </Button>
-          </Grid>
-        </Grid>
-
-        {/* Incident ID Dialog */}
-        <Dialog open={showIncidentDialog} onClose={() => setShowIncidentDialog(false)}>
-          <DialogTitle>Confirm VIP Update</DialogTitle>
-          <DialogContent>
-            <DialogContentText>
-              Please provide a valid ServiceNow Incident ID to proceed with updating this VIP.
-            </DialogContentText>
-            <TextField
-              autoFocus
-              margin="dense"
-              id="incidentIdUpdate"
-              label="ServiceNow Incident ID"
-              type="text"
-              fullWidth
-              variant="standard"
-              value={incidentId}
-              onChange={(e) => setIncidentId(e.target.value)}
-            />
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setShowIncidentDialog(false)}>Cancel</Button>
-            <Button onClick={handleUpdateVip} color="primary" disabled={!incidentId.trim() || saving}>
-              {saving ? <CircularProgress size={24} /> : 'Update VIP'}
-            </Button>
-          </DialogActions>
-        </Dialog>
+        </form>
       </Content>
     </Page>
   );
 };
-
