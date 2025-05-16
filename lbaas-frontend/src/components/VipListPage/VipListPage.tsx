@@ -18,8 +18,9 @@ import {
   StatusAborted,
   StatusRunning
 } from '@backstage/core-components';
-import { useApi, alertApiRef } from '@backstage/core-plugin-api';
+import { useApi, alertApiRef, useRouteRef } from '@backstage/core-plugin-api';
 import { lbaasFrontendApiRef, Vip, AuthToken } from '../../api';
+import { rootRouteRef, vipCreateRouteRef, vipViewRouteRef, vipEditRouteRef } from '../../routes';
 
 const getStatusComponent = (status: string) => {
   switch (status?.toLowerCase()) {
@@ -41,6 +42,12 @@ const getStatusComponent = (status: string) => {
 export const VipListPage = () => {
   const alertApi = useApi(alertApiRef);
   const lbaasApi = useApi(lbaasFrontendApiRef);
+  
+  // Use route refs for navigation
+  const rootRoute = useRouteRef(rootRouteRef);
+  const createVipRoute = useRouteRef(vipCreateRouteRef);
+  const viewVipRoute = useRouteRef(vipViewRouteRef);
+  const editVipRoute = useRouteRef(vipEditRouteRef);
   
   const [vips, setVips] = useState<Vip[]>([]);
   const [loading, setLoading] = useState(false);
@@ -132,6 +139,34 @@ export const VipListPage = () => {
     handleCloseDeleteDialog();
   };
 
+  // Helper functions for navigation
+  const getViewVipUrl = (vipId: string) => {
+    try {
+      return viewVipRoute({ vipId });
+    } catch (error) {
+      console.error('Error generating view VIP URL:', error);
+      return `/lbaas-frontend/${vipId}/view`;
+    }
+  };
+
+  const getEditVipUrl = (vipId: string) => {
+    try {
+      return editVipRoute({ vipId });
+    } catch (error) {
+      console.error('Error generating edit VIP URL:', error);
+      return `/lbaas-frontend/${vipId}/edit`;
+    }
+  };
+
+  const getCreateVipUrl = () => {
+    try {
+      return createVipRoute();
+    } catch (error) {
+      console.error('Error generating create VIP URL:', error);
+      return '/lbaas-frontend/create';
+    }
+  };
+
   if (loginOpen) {
     return (
       <Page themeId="tool">
@@ -158,7 +193,7 @@ export const VipListPage = () => {
                         onChange={(e) => setUsername(e.target.value)}
                         onKeyPress={handleKeyPress}
                         margin="normal"
-                        placeholder="Enter username (e.g., user1)"
+                        placeholder="Username"
                         autoFocus
                       />
                     </Grid>
@@ -171,7 +206,7 @@ export const VipListPage = () => {
                         onChange={(e) => setPassword(e.target.value)}
                         onKeyPress={handleKeyPress}
                         margin="normal"
-                        placeholder="Enter password (e.g., user1)"
+                        placeholder="Password"
                       />
                     </Grid>
                     <Grid item>
@@ -185,11 +220,6 @@ export const VipListPage = () => {
                       >
                         {loading ? <CircularProgress size={24} /> : 'Login'}
                       </Button>
-                    </Grid>
-                    <Grid item>
-                      <Typography variant="caption">
-                        Hint: Try user1/user1 or admin/admin
-                      </Typography>
                     </Grid>
                   </Grid>
                 </form>
@@ -256,12 +286,12 @@ export const VipListPage = () => {
       render: (rowData: Vip) => (
         <>
           <Tooltip title="View Details">
-            <IconButton component={RouterLink} to={`/lbaas-frontend/${rowData.id}/view`}>
+            <IconButton component={RouterLink} to={getViewVipUrl(rowData.id)}>
               <Visibility />
             </IconButton>
           </Tooltip>
           <Tooltip title="Modify VIP">
-            <IconButton component={RouterLink} to={`/lbaas-frontend/${rowData.id}/edit`}>
+            <IconButton component={RouterLink} to={getEditVipUrl(rowData.id)}>
               <Edit />
             </IconButton>
           </Tooltip>
@@ -287,7 +317,7 @@ export const VipListPage = () => {
             variant="contained"
             color="primary"
             component={RouterLink}
-            to="/lbaas-frontend/create"
+            to={getCreateVipUrl()}
             startIcon={<AddCircleOutline />}
           >
             Create New VIP
@@ -326,12 +356,12 @@ export const VipListPage = () => {
                         <TableCell>{getStatusComponent(row.status || '')}</TableCell>
                         <TableCell>
                           <Tooltip title="View Details">
-                            <IconButton component={RouterLink} to={`/lbaas-frontend/${row.id}/view`}>
+                            <IconButton component={RouterLink} to={getViewVipUrl(row.id)}>
                               <Visibility />
                             </IconButton>
                           </Tooltip>
                           <Tooltip title="Modify VIP">
-                            <IconButton component={RouterLink} to={`/lbaas-frontend/${row.id}/edit`}>
+                            <IconButton component={RouterLink} to={getEditVipUrl(row.id)}>
                               <Edit />
                             </IconButton>
                           </Tooltip>
