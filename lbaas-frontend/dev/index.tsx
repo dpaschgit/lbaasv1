@@ -6,8 +6,7 @@ createDevApp()
   .registerPlugin(lbaasPlugin)
   .addPage({
     element: <LbaasPage />,
-    title: 'Root Page',
+    title: 'VIPs', // Changed from 'Root Page' to 'VIPs'
     path: '/lbaas-frontend'
   })
   .render();
-

@@ -1,6 +1,10 @@
 app:
   title: LBaaS Portal
   baseUrl: http://localhost:3000
+  theme:
+    palette:
+      primary:
+        main: '#03a9f4' 
 
 backend:
   baseUrl: http://localhost:8000
@@ -26,4 +30,3 @@ proxy:
     secure: false
     headers:
       Cookie: '' # Disable cookie forwarding if not needed
-

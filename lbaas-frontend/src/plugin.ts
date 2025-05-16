@@ -6,6 +6,7 @@ import { LbaasFrontendApiClient, lbaasFrontendApiRef } from "./api";
 
 export const lbaasPlugin = createPlugin({
   id: "lbaas-frontend",
+  title: "VIPs", // Added title for the sidebar
   apis: [
     createApiFactory({
       api: lbaasFrontendApiRef,
