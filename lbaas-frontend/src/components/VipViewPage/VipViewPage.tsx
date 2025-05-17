@@ -15,8 +15,9 @@ import {
   StatusRunning
 } from '@backstage/core-components';
 import { useApi, alertApiRef, identityApiRef } from '@backstage/core-plugin-api';
+import { lbaasFrontendApiRef } from '../../api';
 
-// Placeholder for actual VipData structure from your models.py
+// Interface for VIP details data
 interface VipDetailsData {
   id: string;
   vip_fqdn: string;
@@ -28,52 +29,20 @@ interface VipDetailsData {
   app_id: string;
   owner: string;
   status: string;
-  created_at?: string; // Assuming these might be in your VipDB model
+  created_at?: string;
   updated_at?: string;
   pool_members?: Array<{ ip: string; port: number; enabled: boolean; status?: string }>;
   monitor?: { type: string; port?: number; send_string?: string; receive_string?: string; interval?: number; timeout?: number };
   persistence?: { type: string; timeout?: number };
-  // Add all other fields from VipDB model
 }
 
-// Mocked API call to fetch a single VIP's details
-const mockFetchVipDetails = async (vipIdentifier: string, authToken: string): Promise<VipDetailsData | null> => {
-  console.log(`Fetching details for VIP: ${vipIdentifier} with token: ${authToken ? 'Token Present' : 'No Token'}`);
-  await new Promise(resolve => setTimeout(resolve, 700));
-  // Find the VIP from a mock dataset or return a detailed mock object
-  const mockVips: VipDetailsData[] = [
-    {
-      id: '65f1c3b3e4b0f8a7b0a3b3e1',
-      vip_fqdn: 'app1.prod.ladc.davelab.net',
-      vip_ip: '10.1.1.101',
-      port: 443,
-      protocol: 'HTTPS',
-      environment: 'Prod',
-      datacenter: 'LADC',
-      app_id: 'APP001',
-      owner: 'user1',
-      status: 'Active',
-      created_at: '2023-03-15T10:00:00Z',
-      updated_at: '2023-03-16T11:30:00Z',
-      pool_members: [{ ip: '192.168.10.1', port: 8443, enabled: true, status: 'Up' }, { ip: '192.168.10.2', port: 8443, enabled: true, status: 'Up' }],
-      monitor: { type: 'HTTPS', port: 8443, send_string: 'GET /health', receive_string: '200 OK', interval: 10, timeout: 3 },
-      persistence: { type: 'SOURCE_IP', timeout: 1800 },
-    },
-    // Add other mock VIPs if needed for testing different IDs
-  ];
-  
-  // Try to find the VIP by ID first
-  let foundVip = mockVips.find(vip => vip.id === vipIdentifier);
-  
-  // If not found by ID, try to find by FQDN
-  if (!foundVip) {
-    foundVip = mockVips.find(vip => vip.vip_fqdn === vipIdentifier);
+// Added null/undefined check to prevent crashes
+const getStatusComponent = (status: string | undefined) => {
+  // Add null check to prevent errors when status is undefined
+  if (!status) {
+    return <Typography variant="body2">Unknown</Typography>;
   }
   
-  return foundVip || null;
-};
-
-const getStatusComponent = (status: string) => {
   switch (status.toLowerCase()) {
     case 'active':
       return <StatusOK>{status}</StatusOK>;
@@ -91,46 +60,20 @@ const getStatusComponent = (status: string) => {
 };
 
 export const VipViewPage = () => {
-  // Get both the vipId parameter and the full location
+  // Use vipId parameter consistently across all components
   const { vipId } = useParams<{ vipId: string }>();
   const location = useLocation();
   const alertApi = useApi(alertApiRef);
   const identityApi = useApi(identityApiRef);
+  const lbaasApi = useApi(lbaasFrontendApiRef);
   const navigate = useNavigate();
   const [vipDetails, setVipDetails] = useState<VipDetailsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-  
-  // Extract VIP identifier from URL path
-  const getVipIdentifierFromPath = () => {
-    // Check if vipId is available from useParams
-    if (vipId) {
-      return vipId;
-    }
-    
-    // Fallback: try to extract from path
-    const pathParts = location.pathname.split('/');
-    
-    // Check if the path contains 'view'
-    const viewIndex = pathParts.indexOf('view');
-    if (viewIndex !== -1 && viewIndex < pathParts.length - 1) {
-      return pathParts[viewIndex + 1]; // Return the part after 'view'
-    }
-    
-    // Check if there's any part after lbaas-frontend
-    const lbaasIndex = pathParts.indexOf('lbaas-frontend');
-    if (lbaasIndex !== -1 && lbaasIndex < pathParts.length - 1) {
-      return pathParts[lbaasIndex + 1]; // Return the part after 'lbaas-frontend'
-    }
-    
-    return null;
-  };
 
   useEffect(() => {
     const fetchData = async () => {
-      const vipIdentifier = getVipIdentifierFromPath();
-      
-      if (!vipIdentifier) {
+      if (!vipId) {
         setError(new Error('VIP ID not found in URL.'));
         setLoading(false);
         return;
@@ -138,13 +81,56 @@ export const VipViewPage = () => {
       
       try {
         setLoading(true);
-        const token = await identityApi.getCredentials();
-        const data = await mockFetchVipDetails(vipIdentifier, token?.token || '');
-        if (data) {
-          setVipDetails(data);
-        } else {
-          setError(new Error(`VIP with identifier ${vipIdentifier} not found.`));
-          alertApi.post({ message: `VIP with identifier ${vipIdentifier} not found.`, severity: 'error' });
+        
+        // Check if we have cached data in sessionStorage
+        const cachedData = sessionStorage.getItem(`vip_${vipId}`);
+        if (cachedData) {
+          try {
+            const parsedData = JSON.parse(cachedData);
+            setVipDetails(parsedData);
+            console.log('Using cached VIP data from sessionStorage');
+            // Continue fetching fresh data in the background
+          } catch (parseError) {
+            console.error('Error parsing cached VIP data:', parseError);
+            // Continue with API fetch if parsing fails
+          }
+        }
+        
+        try {
+          // Use the API client to fetch VIP details
+          const data = await lbaasApi.getVip(vipId);
+          
+          if (data) {
+            // Ensure VIP has a status property to prevent errors
+            const safeData = {
+              ...data,
+              status: data.status || 'Unknown'
+            };
+            setVipDetails(safeData);
+            
+            // Cache the data in sessionStorage for future use
+            try {
+              sessionStorage.setItem(`vip_${vipId}`, JSON.stringify(safeData));
+            } catch (storageError) {
+              console.error('Error caching VIP data:', storageError);
+              // Non-critical error, continue without caching
+            }
+          } else {
+            // If no data returned but no error thrown, check if we already have cached data
+            if (!cachedData) {
+              setError(new Error(`VIP with ID ${vipId} not found.`));
+              alertApi.post({ message: `VIP with ID ${vipId} not found.`, severity: 'error' });
+            }
+          }
+        } catch (apiError: any) {
+          console.error('API call failed:', apiError);
+          
+          // If we don't have cached data, show the error
+          if (!cachedData) {
+            setError(apiError);
+            alertApi.post({ message: `Error fetching VIP details: ${apiError.message}`, severity: 'error' });
+          }
+          // Otherwise, we'll continue using the cached data
         }
       } catch (e: any) {
         setError(e);
@@ -154,13 +140,13 @@ export const VipViewPage = () => {
       }
     };
     fetchData();
-  }, [location.pathname, alertApi, identityApi]);
+  }, [vipId, alertApi, identityApi, lbaasApi]);
 
-  if (loading) {
+  if (loading && !vipDetails) {
     return <CircularProgress />;
   }
 
-  if (error) {
+  if (error && !vipDetails) {
     return (
       <Page themeId="tool">
         <Header title="Error" />
@@ -188,9 +174,6 @@ export const VipViewPage = () => {
     );
   }
 
-  // Use the VIP ID for constructing navigation URLs
-  const vipIdentifier = vipDetails.id || getVipIdentifierFromPath();
-
   return (
     <Page themeId="tool">
       <Header 
@@ -201,7 +184,7 @@ export const VipViewPage = () => {
         </Button>
         <Button 
           component={RouterLink} 
-          to={`/lbaas-frontend/${vipIdentifier}/edit`} 
+          to={`/lbaas-frontend/${vipId}/edit`} 
           variant="contained" 
           color="primary" 
           startIcon={<Edit />} 
@@ -214,6 +197,15 @@ export const VipViewPage = () => {
         <ContentHeader title="VIP Configuration">
           <SupportButton>Detailed information for the selected VIP.</SupportButton>
         </ContentHeader>
+        
+        {error && (
+          <Paper style={{ padding: '10px', marginBottom: '20px', backgroundColor: '#fff3e0' }}>
+            <Typography variant="body2" color="error">
+              Warning: Using cached data. Could not fetch latest VIP details: {error.message}
+            </Typography>
+          </Paper>
+        )}
+        
         <Paper style={{ padding: '20px' }}>
           <Grid container spacing={3}>
             <Grid item xs={12} sm={6}>
@@ -292,12 +284,12 @@ export const VipViewPage = () => {
           </Grid>
         </Paper>
         
-        {/* New section for additional navigation buttons */}
+        {/* Navigation buttons with consistent route structure */}
         <Grid container spacing={2} style={{ marginTop: '20px' }}>
           <Grid item>
             <Button
               component={RouterLink}
-              to={`/lbaas-frontend/vips/${vipIdentifier}/output`}
+              to={`/lbaas-frontend/${vipId}/output`}
               variant="outlined"
               color="primary"
             >
@@ -307,7 +299,7 @@ export const VipViewPage = () => {
           <Grid item>
             <Button
               component={RouterLink}
-              to={`/lbaas-frontend/vips/${vipIdentifier}/promote`}
+              to={`/lbaas-frontend/${vipId}/promote`}
               variant="outlined"
               color="primary"
             >

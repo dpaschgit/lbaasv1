@@ -6,22 +6,36 @@ export const rootRouteRef = createRouteRef({
   id: 'lbaas-frontend',
 });
 
+// Updated to use consistent parameter name 'vipId' across all routes
 export const vipViewRouteRef = createSubRouteRef({
   id: 'lbaas-frontend-vip-view',
   parent: rootRouteRef,
-  path: '/view/:fqdn',
+  path: '/:vipId/view',
 });
 
 export const vipEditRouteRef = createSubRouteRef({
   id: 'lbaas-frontend-vip-edit',
   parent: rootRouteRef,
-  path: '/edit/:fqdn',
+  path: '/:vipId/edit',
 });
 
 export const vipCreateRouteRef = createSubRouteRef({
   id: 'lbaas-frontend-vip-create',
   parent: rootRouteRef,
   path: '/create',
+});
+
+// New route references for translator output and environment promotion
+export const vipOutputRouteRef = createSubRouteRef({
+  id: 'lbaas-frontend-vip-output',
+  parent: rootRouteRef,
+  path: '/:vipId/output',
+});
+
+export const vipPromoteRouteRef = createSubRouteRef({
+  id: 'lbaas-frontend-vip-promote',
+  parent: rootRouteRef,
+  path: '/:vipId/promote',
 });
 
 export const lbaasFrontendPlugin = createPlugin({
@@ -38,6 +52,8 @@ export const lbaasFrontendPlugin = createPlugin({
     vipView: vipViewRouteRef,
     vipEdit: vipEditRouteRef,
     vipCreate: vipCreateRouteRef,
+    vipOutput: vipOutputRouteRef,
+    vipPromote: vipPromoteRouteRef,
   },
 });
 
@@ -74,6 +90,25 @@ export const LbaasFrontendCreatePage = lbaasFrontendPlugin.provide(
     component: () =>
       import('./components/VipCreatePage/VipCreatePage').then(m => m.VipCreatePage),
     mountPoint: vipCreateRouteRef,
+  }),
+);
+
+// New routable extensions for translator output and environment promotion
+export const LbaasFrontendOutputPage = lbaasFrontendPlugin.provide(
+  createRoutableExtension({
+    name: 'LbaasFrontendOutputPage',
+    component: () =>
+      import('./components/TranslatorOutputPage/TranslatorOutputPage').then(m => m.TranslatorOutputPage),
+    mountPoint: vipOutputRouteRef,
+  }),
+);
+
+export const LbaasFrontendPromotePage = lbaasFrontendPlugin.provide(
+  createRoutableExtension({
+    name: 'LbaasFrontendPromotePage',
+    component: () =>
+      import('./components/EnvironmentPromotionPage/EnvironmentPromotionPage').then(m => m.EnvironmentPromotionPage),
+    mountPoint: vipPromoteRouteRef,
   }),
 );
 

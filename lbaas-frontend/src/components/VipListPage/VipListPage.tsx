@@ -19,66 +19,7 @@ import {
   StatusRunning
 } from '@backstage/core-components';
 import { useApi, alertApiRef, identityApiRef } from '@backstage/core-plugin-api';
-
-// Placeholder for API client - this will be defined in a separate api.ts file
-// For now, we'll mock the data fetching
-
-// Mocked API call to fetch VIPs (replace with actual API client later)
-const mockFetchVips = async (authToken: string) => {
-  console.log('Fetching VIPs with token:', authToken ? 'Token Present' : 'No Token');
-  await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network delay
-  // This data should align with your seed_mongo.py and backend models
-  return [
-    {
-      id: '65f1c3b3e4b0f8a7b0a3b3e1',
-      vip_fqdn: 'app1.prod.ladc.davelab.net',
-      vip_ip: '10.1.1.101',
-      port: 443,
-      protocol: 'HTTPS',
-      environment: 'Prod',
-      datacenter: 'LADC',
-      app_id: 'APP001',
-      owner: 'user1',
-      status: 'Active',
-    },
-    {
-      id: '65f1c3b3e4b0f8a7b0a3b3e2',
-      vip_fqdn: 'app1.uat.nydc.davelab.net',
-      vip_ip: '10.2.1.101',
-      port: 80,
-      protocol: 'HTTP',
-      environment: 'UAT',
-      datacenter: 'NYDC',
-      app_id: 'APP001',
-      owner: 'user1',
-      status: 'Building',
-    },
-    {
-      id: '65f1c3b3e4b0f8a7b0a3b3e3',
-      vip_fqdn: 'app2.dev.ladc.davelab.net',
-      vip_ip: '192.168.1.50',
-      port: 8080,
-      protocol: 'TCP',
-      environment: 'DEV',
-      datacenter: 'LADC',
-      app_id: 'APP002',
-      owner: 'user2',
-      status: 'Error',
-    },
-  ];
-};
-
-// Mocked API call to delete a VIP
-const mockDeleteVip = async (vipId: string, incidentId: string, authToken: string) => {
-  console.log(`Attempting to delete VIP: ${vipId} with Incident: ${incidentId} and token: ${authToken ? 'Token Present' : 'No Token'}`);
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  // Simulate success/failure
-  if (incidentId === 'valid_incident_for_delete') {
-    return { success: true, message: `VIP ${vipId} deleted successfully.` };
-  }
-  return { success: false, message: 'Failed to delete VIP. Invalid incident ID or other error.' };
-};
-
+import { lbaasFrontendApiRef } from '../../api';
 
 interface VipRowData {
   id: string;
@@ -93,7 +34,52 @@ interface VipRowData {
   status: string; 
 }
 
-const getStatusComponent = (status: string) => {
+// Mock data for when authentication is not available
+const mockVips: VipRowData[] = [
+  {
+    id: '65f1c3b3e4b0f8a7b0a3b3e1',
+    vip_fqdn: 'app1.prod.ladc.davelab.net',
+    vip_ip: '10.1.1.101',
+    port: 443,
+    protocol: 'HTTPS',
+    environment: 'Prod',
+    datacenter: 'LADC',
+    app_id: 'APP001',
+    owner: 'user1',
+    status: 'Active',
+  },
+  {
+    id: '65f1c3b3e4b0f8a7b0a3b3e2',
+    vip_fqdn: 'app1.uat.nydc.davelab.net',
+    vip_ip: '10.2.1.101',
+    port: 80,
+    protocol: 'HTTP',
+    environment: 'UAT',
+    datacenter: 'NYDC',
+    app_id: 'APP001',
+    owner: 'user1',
+    status: 'Building',
+  },
+  {
+    id: '65f1c3b3e4b0f8a7b0a3b3e3',
+    vip_fqdn: 'app2.dev.ladc.davelab.net',
+    vip_ip: '192.168.1.50',
+    port: 8080,
+    protocol: 'TCP',
+    environment: 'DEV',
+    datacenter: 'LADC',
+    app_id: 'APP002',
+    owner: 'user2',
+    status: 'Error',
+  },
+];
+
+const getStatusComponent = (status: string | undefined) => {
+  // Add null check to prevent errors when status is undefined
+  if (!status) {
+    return <Typography variant="body2">Unknown</Typography>;
+  }
+  
   switch (status.toLowerCase()) {
     case 'active':
       return <StatusOK>{status}</StatusOK>;
@@ -113,31 +99,134 @@ const getStatusComponent = (status: string) => {
 export const VipListPage = () => {
   const alertApi = useApi(alertApiRef);
   const identityApi = useApi(identityApiRef);
+  const lbaasApi = useApi(lbaasFrontendApiRef);
   const [vips, setVips] = useState<VipRowData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
   const [selectedVipId, setSelectedVipId] = useState<string | null>(null);
   const [incidentId, setIncidentId] = useState('');
+  const [showLoginDialog, setShowLoginDialog] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
+  // Check authentication status and fetch VIPs
   useEffect(() => {
     const fetchData = async () => {
       try {
         setLoading(true);
-        const token = await identityApi.getCredentials(); // Get auth token
-        const data = await mockFetchVips(token?.token || ''); // Pass token to API call
-        setVips(data);
+        
+        // Check if user is authenticated
+        if (!lbaasApi.isAuthenticated()) {
+          console.log('User is not authenticated, using mock data');
+          // Use mock data when not authenticated
+          setVips(mockVips);
+          // Show login dialog
+          setShowLoginDialog(true);
+        } else {
+          console.log('User is authenticated, fetching real data');
+          // User is authenticated, fetch real data
+          try {
+            const data = await lbaasApi.getVips();
+            // Ensure all VIPs have a status property to prevent errors
+            const safeData = data.map(vip => ({
+              ...vip,
+              status: vip.status || 'Unknown'
+            }));
+            setVips(safeData);
+          } catch (apiError: any) {
+            console.error('API call failed:', apiError);
+            // If authentication error, show login dialog and use mock data
+            if (apiError.message === 'Authentication required. Please login.' || 
+                apiError.message === 'Authentication expired. Please login again.') {
+              setShowLoginDialog(true);
+              setVips(mockVips);
+            } else {
+              // For other errors, propagate them
+              throw apiError;
+            }
+          }
+        }
       } catch (e: any) {
         setError(e);
+        
+        // If authentication error, show login dialog
+        if (e.message === 'Authentication required. Please login.') {
+          setShowLoginDialog(true);
+        }
+        
         alertApi.post({ message: `Error fetching VIPs: ${e.message}`, severity: 'error' });
       } finally {
         setLoading(false);
       }
     };
+    
     fetchData();
-  }, [alertApi, identityApi]);
+  }, [alertApi, identityApi, lbaasApi]);
+
+  const handleLogin = async () => {
+    if (!username || !password) {
+      alertApi.post({ message: 'Username and password are required.', severity: 'error' });
+      return;
+    }
+    
+    try {
+      setIsLoggingIn(true);
+      
+      // Attempt to login
+      await lbaasApi.login(username, password);
+      
+      // If successful, close dialog and refresh data
+      setShowLoginDialog(false);
+      setUsername('');
+      setPassword('');
+      
+      // Fetch real data after login
+      setLoading(true);
+      try {
+        const data = await lbaasApi.getVips();
+        // Ensure all VIPs have a status property to prevent errors
+        const safeData = data.map(vip => ({
+          ...vip,
+          status: vip.status || 'Unknown'
+        }));
+        setVips(safeData);
+      } catch (apiError: any) {
+        console.error('API call failed after login:', apiError);
+        // Use mock data as fallback
+        setVips(mockVips);
+        throw apiError;
+      }
+      
+      alertApi.post({ message: 'Login successful.', severity: 'success' });
+    } catch (e: any) {
+      alertApi.post({ message: `Login failed: ${e.message}`, severity: 'error' });
+    } finally {
+      setIsLoggingIn(false);
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await lbaasApi.logout();
+      // Reset to mock data after logout
+      setVips(mockVips);
+      alertApi.post({ message: 'Logged out successfully.', severity: 'success' });
+    } catch (e: any) {
+      alertApi.post({ message: `Error during logout: ${e.message}`, severity: 'error' });
+    }
+  };
 
   const handleDeleteClick = (vipId: string) => {
+    // Check authentication before allowing delete
+    if (!lbaasApi.isAuthenticated()) {
+      alertApi.post({ message: 'Authentication required to delete VIPs.', severity: 'error' });
+      setShowLoginDialog(true);
+      return;
+    }
+    
     setSelectedVipId(vipId);
     setOpenDeleteDialog(true);
   };
@@ -153,18 +242,29 @@ export const VipListPage = () => {
       alertApi.post({ message: 'Incident ID is required for deletion.', severity: 'error' });
       return;
     }
+    
+    // Check authentication before attempting delete
+    if (!lbaasApi.isAuthenticated()) {
+      alertApi.post({ message: 'Authentication required to delete VIPs.', severity: 'error' });
+      setShowLoginDialog(true);
+      handleCloseDeleteDialog();
+      return;
+    }
+    
     try {
-      const token = await identityApi.getCredentials();
-      const result = await mockDeleteVip(selectedVipId, incidentId, token?.token || '');
-      if (result.success) {
-        alertApi.post({ message: result.message, severity: 'success' });
-        // Refresh VIP list
-        setVips(vips.filter(vip => vip.id !== selectedVipId));
-      } else {
-        alertApi.post({ message: result.message, severity: 'error' });
-      }
+      // Use the API client to delete VIP
+      await lbaasApi.deleteVip(selectedVipId, incidentId);
+      alertApi.post({ message: `VIP ${selectedVipId} deleted successfully.`, severity: 'success' });
+      // Refresh VIP list
+      setVips(vips.filter(vip => vip.id !== selectedVipId));
     } catch (e: any) {
       alertApi.post({ message: `Error deleting VIP: ${e.message}`, severity: 'error' });
+      
+      // If authentication error, show login dialog
+      if (e.message === 'Authentication required. Please login.' || 
+          e.message === 'Authentication expired. Please login again.') {
+        setShowLoginDialog(true);
+      }
     }
     handleCloseDeleteDialog();
   };
@@ -173,7 +273,7 @@ export const VipListPage = () => {
     return <CircularProgress />;
   }
 
-  if (error) {
+  if (error && !showLoginDialog) {
     return <Typography color="error">Error loading VIPs: {error.message}</Typography>;
   }
 
@@ -219,17 +319,43 @@ export const VipListPage = () => {
       </Header>
       <Content>
         <ContentHeader title="VIP List">
-          <Button
-            variant="contained"
-            color="primary"
-            component={RouterLink}
-            to="/lbaas-frontend/create"
-            startIcon={<AddCircleOutline />}
-          >
-            Create New VIP
-          </Button>
-          <SupportButton>Manage and request load balancer VIPs.</SupportButton>
+          <Grid container spacing={2} alignItems="center">
+            <Grid item>
+              <Button
+                variant="contained"
+                color="primary"
+                component={RouterLink}
+                to="/lbaas-frontend/create"
+                startIcon={<AddCircleOutline />}
+              >
+                Create New VIP
+              </Button>
+            </Grid>
+            <Grid item>
+              {lbaasApi.isAuthenticated() ? (
+                <Button variant="outlined" color="secondary" onClick={handleLogout}>
+                  Logout
+                </Button>
+              ) : (
+                <Button variant="outlined" color="primary" onClick={() => setShowLoginDialog(true)}>
+                  Login
+                </Button>
+              )}
+            </Grid>
+            <Grid item>
+              <SupportButton>Manage and request load balancer VIPs.</SupportButton>
+            </Grid>
+          </Grid>
         </ContentHeader>
+        
+        {!lbaasApi.isAuthenticated() && (
+          <Paper style={{ padding: '10px', marginBottom: '20px', backgroundColor: '#fff3e0' }}>
+            <Typography variant="body2" color="textSecondary">
+              You are viewing mock data. Please login to access real VIP data and perform actions.
+            </Typography>
+          </Paper>
+        )}
+        
         <Grid container spacing={3} direction="column">
           <Grid item>
             <TableContainer component={Paper}>
@@ -267,7 +393,6 @@ export const VipListPage = () => {
                             </IconButton>
                           </Tooltip>
                           <Tooltip title="Modify VIP">
-                            {/* Modify will eventually prompt for incident ID before navigating */}
                             <IconButton component={RouterLink} to={`/lbaas-frontend/${row.id}/edit`}>
                               <Edit />
                             </IconButton>
@@ -287,6 +412,47 @@ export const VipListPage = () => {
           </Grid>
         </Grid>
       </Content>
+
+      {/* Login Dialog */}
+      <Dialog open={showLoginDialog} onClose={() => setShowLoginDialog(false)}>
+        <DialogTitle>Login Required</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Please login to access the LBaaS API and perform actions.
+          </DialogContentText>
+          <TextField
+            autoFocus
+            margin="dense"
+            id="username"
+            label="Username"
+            type="text"
+            fullWidth
+            variant="standard"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+          />
+          <TextField
+            margin="dense"
+            id="password"
+            label="Password"
+            type="password"
+            fullWidth
+            variant="standard"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowLoginDialog(false)}>Cancel</Button>
+          <Button 
+            onClick={handleLogin} 
+            color="primary" 
+            disabled={!username || !password || isLoggingIn}
+          >
+            {isLoggingIn ? <CircularProgress size={24} /> : 'Login'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={openDeleteDialog} onClose={handleCloseDeleteDialog}>
