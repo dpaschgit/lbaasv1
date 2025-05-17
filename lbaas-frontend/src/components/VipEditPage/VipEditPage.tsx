@@ -1,8 +1,8 @@
-import React, { useEffect, useState, FormEvent } from 'react';
-import { Typography, Grid, Button, CircularProgress, TextField, MenuItem, Paper } from '@material-ui/core';
-import { ArrowBack, Save } from '@material-ui/icons';
+import React, { useEffect, useState } from 'react';
+import { Typography, Grid, Button, CircularProgress, TextField, Paper, FormControl, InputLabel, Select, MenuItem } from '@material-ui/core';
+import { useNavigate, useParams } from 'react-router-dom';
+import { ArrowBack } from '@material-ui/icons';
 import {
-  InfoCard,
   Header,
   Page,
   Content,
@@ -10,231 +10,246 @@ import {
   SupportButton,
 } from '@backstage/core-components';
 import { useApi, alertApiRef } from '@backstage/core-plugin-api';
-import { lbaasFrontendApiRef, Vip } from '../../api';
-
-// Token storage key - must match the one in api.ts
-const TOKEN_STORAGE_KEY = 'lbaas_auth_token';
+import { lbaasFrontendApiRef, Vip, PoolMember } from '../../api';
 
 export const VipEditPage = () => {
   const alertApi = useApi(alertApiRef);
   const lbaasApi = useApi(lbaasFrontendApiRef);
+  const navigate = useNavigate();
+  const { fqdn } = useParams<{ fqdn: string }>();
   
-  const [vip, setVip] = useState<Vip | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-  const [loginOpen, setLoginOpen] = useState(false);
-  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [formData, setFormData] = useState<Partial<Vip>>({});
   
-  // Form fields
-  const [vipFqdn, setVipFqdn] = useState('');
-  const [vipIp, setVipIp] = useState('');
-  const [port, setPort] = useState('');
-  const [protocol, setProtocol] = useState('');
-  const [environment, setEnvironment] = useState('');
-  const [datacenter, setDatacenter] = useState('');
-  const [appId, setAppId] = useState('');
-  const [owner, setOwner] = useState('');
-  const [status, setStatus] = useState('');
+  // Pool member management
+  const [poolMembers, setPoolMembers] = useState<PoolMember[]>([]);
+  const [currentPoolMember, setCurrentPoolMember] = useState<PoolMember>({
+    server_name: '',
+    server_ip: '',
+    server_port: 8443,
+    weight: 1
+  });
 
   useEffect(() => {
-    const fetchVipDetails = async () => {
+    const loadVipDetails = async () => {
       try {
-        setLoading(true);
+        setInitialLoading(true);
+        setError(null);
         
-        // Get VIP ID from URL
-        const pathParts = window.location.pathname.split('/');
-        const vipId = pathParts[pathParts.length - 2]; // Format: /lbaas-frontend/:vipId/edit
+        console.log(`Loading VIP details for FQDN: ${fqdn}`);
         
-        if (!vipId) {
-          throw new Error('VIP ID not found in URL');
+        if (!fqdn) {
+          // If no FQDN in URL, try to get VIP from sessionStorage
+          const storedVip = sessionStorage.getItem('currentVip');
+          
+          if (!storedVip) {
+            throw new Error('VIP details not found. Please return to the VIP list and try again.');
+          }
+          
+          const vipData = JSON.parse(storedVip) as Vip;
+          console.log('Loaded VIP details from sessionStorage:', vipData);
+          
+          setFormData(vipData);
+          setPoolMembers(vipData.pool_members || []);
+          return;
         }
         
-        console.log(`Fetching details for VIP ID: ${vipId}`);
-        
-        // Get token from localStorage
-        const token = localStorage.getItem(TOKEN_STORAGE_KEY);
-        if (!token) {
-          setLoginOpen(true);
-          throw new Error('Authentication required. Please login.');
+        // Try to fetch VIP details from backend using FQDN
+        try {
+          // First, get all VIPs
+          const allVips = await lbaasApi.getVips();
+          console.log('Fetched all VIPs to find matching FQDN:', allVips);
+          
+          // Find the VIP with matching FQDN
+          const decodedFqdn = decodeURIComponent(fqdn);
+          const matchingVip = allVips.find(vip => vip.vip_fqdn === decodedFqdn);
+          
+          if (!matchingVip) {
+            throw new Error(`VIP with FQDN ${decodedFqdn} not found`);
+          }
+          
+          console.log('Found matching VIP:', matchingVip);
+          
+          // If VIP has an ID, fetch full details
+          if (matchingVip.id) {
+            console.log(`Fetching full VIP details for ID: ${matchingVip.id}`);
+            const vipData = await lbaasApi.getVip(matchingVip.id);
+            console.log('Fetched VIP details from backend:', vipData);
+            setFormData(vipData);
+            setPoolMembers(vipData.pool_members || []);
+          } else {
+            // If no ID, use the VIP from the list
+            console.log('Using VIP details from list (no ID available)');
+            setFormData(matchingVip);
+            setPoolMembers(matchingVip.pool_members || []);
+          }
+        } catch (e) {
+          console.error('Error fetching VIP from backend:', e);
+          
+          // Fallback to sessionStorage if backend fetch fails
+          const storedVip = sessionStorage.getItem('currentVip');
+          
+          if (!storedVip) {
+            throw new Error('Failed to fetch VIP details from backend and no backup found in sessionStorage.');
+          }
+          
+          console.log('Falling back to sessionStorage for VIP details');
+          const vipData = JSON.parse(storedVip) as Vip;
+          setFormData(vipData);
+          setPoolMembers(vipData.pool_members || []);
         }
-        
-        // Fetch VIP details
-        const vipData = await lbaasApi.getVip(vipId, token);
-        setVip(vipData);
-        
-        // Populate form fields
-        setVipFqdn(vipData.vip_fqdn || '');
-        setVipIp(vipData.vip_ip || '');
-        setPort(vipData.port?.toString() || '');
-        setProtocol(vipData.protocol || '');
-        setEnvironment(vipData.environment || '');
-        setDatacenter(vipData.datacenter || '');
-        setAppId(vipData.app_id || '');
-        setOwner(vipData.owner || '');
-        setStatus(vipData.status || '');
       } catch (e: any) {
-        console.error('Error fetching VIP details:', e);
+        console.error('Error loading VIP details:', e);
         setError(e);
         alertApi.post({ message: `Error: ${e.message}`, severity: 'error' });
-        
-        // If authentication error, redirect to main page for login
-        if (e.message.includes('Authentication') || e.message.includes('login')) {
-          navigateToMainPage();
-        }
       } finally {
-        setLoading(false);
+        setInitialLoading(false);
       }
     };
     
-    fetchVipDetails();
-  }, []);
+    loadVipDetails();
+  }, [alertApi, lbaasApi, fqdn]);
 
-  const navigateToMainPage = () => {
-    try {
-      window.location.href = '/lbaas-frontend';
-    } catch (error) {
-      console.error('Navigation error:', error);
+  const handleChange = (event: React.ChangeEvent<{ name?: string; value: unknown }>) => {
+    const name = event.target.name as keyof Vip;
+    setFormData({
+      ...formData,
+      [name]: event.target.value,
+    });
+  };
+  
+  const handleNumericChange = (event: React.ChangeEvent<{ name?: string; value: unknown }>) => {
+    const name = event.target.name as keyof Vip;
+    const value = event.target.value as string;
+    setFormData({
+      ...formData,
+      [name]: value === '' ? '' : Number(value),
+    });
+  };
+  
+  const handlePoolMemberChange = (event: React.ChangeEvent<{ name?: string; value: unknown }>) => {
+    const name = event.target.name as keyof PoolMember;
+    const value = event.target.value as string;
+    
+    setCurrentPoolMember({
+      ...currentPoolMember,
+      [name]: name === 'server_port' || name === 'weight' 
+        ? (value === '' ? '' : Number(value)) 
+        : value,
+    });
+  };
+  
+  const addPoolMember = () => {
+    if (!currentPoolMember.server_name || !currentPoolMember.server_ip) {
+      alertApi.post({ message: 'Server name and IP are required for pool members', severity: 'error' });
+      return;
     }
+    
+    const updatedPoolMembers = [...poolMembers, currentPoolMember];
+    setPoolMembers(updatedPoolMembers);
+    setFormData({
+      ...formData,
+      pool_members: updatedPoolMembers
+    });
+    
+    // Reset the form for the next pool member
+    setCurrentPoolMember({
+      server_name: '',
+      server_ip: '',
+      server_port: 8443,
+      weight: 1
+    });
+  };
+  
+  const removePoolMember = (index: number) => {
+    const updatedPoolMembers = poolMembers.filter((_, i) => i !== index);
+    setPoolMembers(updatedPoolMembers);
+    setFormData({
+      ...formData,
+      pool_members: updatedPoolMembers
+    });
   };
 
   const validateForm = () => {
-    const errors: Record<string, string> = {};
-    
-    if (!vipFqdn) {
-      errors.vipFqdn = 'FQDN is required';
-    } else if (!/^[a-zA-Z0-9][a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(vipFqdn)) {
-      errors.vipFqdn = 'Invalid FQDN format';
+    if (!formData.vip_fqdn) {
+      alertApi.post({ message: 'VIP FQDN is required', severity: 'error' });
+      return false;
     }
     
-    if (!vipIp) {
-      errors.vipIp = 'IP Address is required';
-    } else if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(vipIp)) {
-      errors.vipIp = 'Invalid IP Address format';
+    if (!formData.app_id) {
+      alertApi.post({ message: 'Application ID is required', severity: 'error' });
+      return false;
     }
     
-    if (!port) {
-      errors.port = 'Port is required';
-    } else {
-      const portNum = parseInt(port, 10);
-      if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
-        errors.port = 'Port must be between 1 and 65535';
-      }
+    if (!formData.port || formData.port <= 0) {
+      alertApi.post({ message: 'Valid port number is required', severity: 'error' });
+      return false;
     }
     
-    if (!protocol) {
-      errors.protocol = 'Protocol is required';
-    }
-    
-    if (!environment) {
-      errors.environment = 'Environment is required';
-    }
-    
-    if (!datacenter) {
-      errors.datacenter = 'Datacenter is required';
-    }
-    
-    if (!appId) {
-      errors.appId = 'App ID is required';
-    }
-    
-    if (!owner) {
-      errors.owner = 'Owner is required';
-    }
-    
-    setFormErrors(errors);
-    return Object.keys(errors).length === 0;
+    return true;
   };
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    
-    if (!validateForm()) {
-      alertApi.post({ message: 'Please fix the form errors before submitting', severity: 'error' });
-      return;
+  const handleBackToList = () => {
+    navigate('/lbaas-frontend');
+  };
+
+  const handleBackToView = () => {
+    if (formData.vip_fqdn) {
+      navigate(`/lbaas-frontend/view/${encodeURIComponent(formData.vip_fqdn)}`);
+    } else {
+      navigate('/lbaas-frontend');
     }
-    
-    if (!vip) {
-      alertApi.post({ message: 'VIP data not loaded', severity: 'error' });
+  };
+
+  const handleSubmit = async () => {
+    if (!validateForm()) {
       return;
     }
     
     try {
-      setSaving(true);
+      setLoading(true);
       
-      // Get token from localStorage
-      const token = localStorage.getItem(TOKEN_STORAGE_KEY);
-      if (!token) {
-        setLoginOpen(true);
-        throw new Error('Authentication required. Please login.');
+      console.log('Updating VIP with data:', formData);
+      const result = await lbaasApi.updateVip(formData.id || '', formData);
+      
+      alertApi.post({ message: `VIP ${result.vip_fqdn} updated successfully`, severity: 'success' });
+      
+      // Update the VIP in sessionStorage
+      if (result) {
+        sessionStorage.setItem('currentVip', JSON.stringify(result));
+        
+        // Navigate to the view page with the FQDN in the URL
+        navigate(`/lbaas-frontend/view/${encodeURIComponent(result.vip_fqdn)}`);
+      } else {
+        // If no result, go back to list
+        navigate('/lbaas-frontend');
       }
-      
-      // Prepare updated VIP data
-      const updatedVip: Partial<Vip> = {
-        vip_fqdn: vipFqdn,
-        vip_ip: vipIp,
-        port: parseInt(port, 10),
-        protocol,
-        environment,
-        datacenter,
-        app_id: appId,
-        owner,
-        status,
-      };
-      
-      // Update VIP
-      await lbaasApi.updateVip(vip.id, updatedVip, token);
-      
-      alertApi.post({ message: 'VIP updated successfully', severity: 'success' });
-      
-      // Navigate back to VIP list
-      navigateToMainPage();
     } catch (e: any) {
       console.error('Error updating VIP:', e);
-      alertApi.post({ message: `Error: ${e.message}`, severity: 'error' });
       
-      // If authentication error, redirect to main page for login
+      // If authentication error, redirect to list page
       if (e.message.includes('Authentication') || e.message.includes('login')) {
-        navigateToMainPage();
+        alertApi.post({ message: 'Authentication required. Please login again.', severity: 'error' });
+        navigate('/lbaas-frontend');
+      } else {
+        alertApi.post({ message: `Error: ${e.message}`, severity: 'error' });
       }
     } finally {
-      setSaving(false);
+      setLoading(false);
     }
   };
 
-  if (loginOpen) {
+  if (initialLoading) {
     return (
       <Page themeId="tool">
-        <Header title="Edit VIP" subtitle="Modify Load Balancer VIP Information" />
+        <Header title="Loading VIP Details" />
         <Content>
           <Grid container spacing={3} justifyContent="center">
-            <Grid item xs={12} sm={8} md={6} lg={4}>
-              <InfoCard title="Authentication Required">
-                <Typography>You need to login to edit VIP details.</Typography>
-                <Button 
-                  variant="contained" 
-                  color="primary" 
-                  onClick={navigateToMainPage}
-                  style={{ marginTop: 16 }}
-                >
-                  Go to Login
-                </Button>
-              </InfoCard>
-            </Grid>
-          </Grid>
-        </Content>
-      </Page>
-    );
-  }
-
-  if (loading) {
-    return (
-      <Page themeId="tool">
-        <Header title="Edit VIP" subtitle="Modify Load Balancer VIP Information" />
-        <Content>
-          <Grid container spacing={3} justifyContent="center" alignItems="center" style={{ height: '50vh' }}>
             <Grid item>
               <CircularProgress />
+              <Typography style={{ marginTop: 16 }}>Loading VIP details...</Typography>
             </Grid>
           </Grid>
         </Content>
@@ -245,48 +260,12 @@ export const VipEditPage = () => {
   if (error) {
     return (
       <Page themeId="tool">
-        <Header title="Edit VIP" subtitle="Modify Load Balancer VIP Information" />
+        <Header title="Error" />
         <Content>
-          <Grid container spacing={3} justifyContent="center">
-            <Grid item xs={12}>
-              <InfoCard title="Error">
-                <Typography color="error">Error loading VIP details: {error.message}</Typography>
-                <Button 
-                  variant="contained" 
-                  color="primary" 
-                  onClick={navigateToMainPage}
-                  style={{ marginTop: 16 }}
-                >
-                  Back to VIP List
-                </Button>
-              </InfoCard>
-            </Grid>
-          </Grid>
-        </Content>
-      </Page>
-    );
-  }
-
-  if (!vip) {
-    return (
-      <Page themeId="tool">
-        <Header title="Edit VIP" subtitle="Modify Load Balancer VIP Information" />
-        <Content>
-          <Grid container spacing={3} justifyContent="center">
-            <Grid item xs={12}>
-              <InfoCard title="Not Found">
-                <Typography>VIP not found or has been deleted.</Typography>
-                <Button 
-                  variant="contained" 
-                  color="primary" 
-                  onClick={navigateToMainPage}
-                  style={{ marginTop: 16 }}
-                >
-                  Back to VIP List
-                </Button>
-              </InfoCard>
-            </Grid>
-          </Grid>
+          <Typography color="error">{error.message}</Typography>
+          <Button onClick={handleBackToList} variant="outlined" style={{ marginTop: '20px' }}>
+            Back to VIP List
+          </Button>
         </Content>
       </Page>
     );
@@ -294,202 +273,229 @@ export const VipEditPage = () => {
 
   return (
     <Page themeId="tool">
-      <Header title="Edit VIP" subtitle="Modify Load Balancer VIP Information" />
+      <Header title={`Edit VIP: ${formData.vip_fqdn}`} subtitle={`Application ID: ${formData.app_id}`}>
+        <Button onClick={handleBackToView} variant="outlined" startIcon={<ArrowBack />}>
+          Back to VIP Details
+        </Button>
+      </Header>
       <Content>
-        <ContentHeader title={`Editing: ${vip.vip_fqdn || 'VIP'}`}>
-          <Button
-            variant="contained"
-            color="default"
-            onClick={navigateToMainPage}
-            startIcon={<ArrowBack />}
-          >
-            Cancel
-          </Button>
-          <SupportButton>Edit information about this VIP.</SupportButton>
+        <ContentHeader title="VIP Configuration">
+          <SupportButton>Edit the details of this VIP.</SupportButton>
         </ContentHeader>
-        <form onSubmit={handleSubmit}>
-          <Grid container spacing={3}>
-            <Grid item xs={12}>
-              <InfoCard title="Basic Information">
-                <Grid container spacing={3}>
-                  <Grid item xs={12} md={6}>
-                    <TextField
-                      fullWidth
-                      label="FQDN"
-                      value={vipFqdn}
-                      onChange={(e) => setVipFqdn(e.target.value)}
-                      margin="normal"
-                      variant="outlined"
-                      required
-                      error={!!formErrors.vipFqdn}
-                      helperText={formErrors.vipFqdn}
-                    />
-                  </Grid>
-                  <Grid item xs={12} md={6}>
-                    <TextField
-                      fullWidth
-                      label="IP Address"
-                      value={vipIp}
-                      onChange={(e) => setVipIp(e.target.value)}
-                      margin="normal"
-                      variant="outlined"
-                      required
-                      error={!!formErrors.vipIp}
-                      helperText={formErrors.vipIp}
-                    />
-                  </Grid>
-                  <Grid item xs={12} md={6}>
-                    <TextField
-                      fullWidth
-                      label="Port"
-                      value={port}
-                      onChange={(e) => setPort(e.target.value)}
-                      margin="normal"
-                      variant="outlined"
-                      required
-                      error={!!formErrors.port}
-                      helperText={formErrors.port}
-                    />
-                  </Grid>
-                  <Grid item xs={12} md={6}>
-                    <TextField
-                      fullWidth
-                      select
-                      label="Protocol"
-                      value={protocol}
-                      onChange={(e) => setProtocol(e.target.value)}
-                      margin="normal"
-                      variant="outlined"
-                      required
-                      error={!!formErrors.protocol}
-                      helperText={formErrors.protocol}
-                    >
-                      <MenuItem value="HTTP">HTTP</MenuItem>
-                      <MenuItem value="HTTPS">HTTPS</MenuItem>
-                      <MenuItem value="TCP">TCP</MenuItem>
-                      <MenuItem value="UDP">UDP</MenuItem>
-                    </TextField>
-                  </Grid>
-                </Grid>
-              </InfoCard>
-            </Grid>
+        <Grid container spacing={3} component={Paper} style={{ padding: '20px' }}>
+          <Grid item xs={12} sm={6}>
+            <TextField
+              required
+              name="vip_fqdn"
+              label="VIP FQDN"
+              fullWidth
+              value={formData.vip_fqdn || ''}
+              onChange={handleChange}
+              helperText="Fully Qualified Domain Name for the VIP"
+            />
+          </Grid>
+          <Grid item xs={12} sm={6}>
+            <TextField
+              required
+              name="app_id"
+              label="Application ID"
+              fullWidth
+              value={formData.app_id || ''}
+              onChange={handleChange}
+              helperText="Unique identifier for the application"
+            />
+          </Grid>
+          <Grid item xs={12} sm={6}>
+            <TextField
+              name="vip_ip"
+              label="VIP IP Address"
+              fullWidth
+              value={formData.vip_ip || ''}
+              onChange={handleChange}
+              helperText="IP address for the VIP"
+            />
+          </Grid>
+          <Grid item xs={12} sm={6}>
+            <TextField
+              name="owner"
+              label="Owner"
+              fullWidth
+              value={formData.owner || ''}
+              onChange={handleChange}
+              helperText="Owner or responsible team for this VIP"
+            />
+          </Grid>
+          <Grid item xs={12} sm={3}>
+            <FormControl fullWidth required>
+              <InputLabel id="environment-label">Environment</InputLabel>
+              <Select
+                labelId="environment-label"
+                name="environment"
+                value={formData.environment || 'DEV'}
+                onChange={handleChange}
+              >
+                <MenuItem value="DEV">DEV</MenuItem>
+                <MenuItem value="UAT">UAT</MenuItem>
+                <MenuItem value="PROD">PROD</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={12} sm={3}>
+            <FormControl fullWidth required>
+              <InputLabel id="datacenter-label">Datacenter</InputLabel>
+              <Select
+                labelId="datacenter-label"
+                name="datacenter"
+                value={formData.datacenter || 'LADC'}
+                onChange={handleChange}
+              >
+                <MenuItem value="LADC">LADC</MenuItem>
+                <MenuItem value="NYDC">NYDC</MenuItem>
+                <MenuItem value="UKDC">UKDC</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={12} sm={3}>
+            <TextField
+              required
+              name="port"
+              label="Port"
+              type="number"
+              fullWidth
+              value={formData.port || ''}
+              onChange={handleNumericChange}
+              helperText="Port number for the VIP"
+            />
+          </Grid>
+          <Grid item xs={12} sm={3}>
+            <FormControl fullWidth required>
+              <InputLabel id="protocol-label">Protocol</InputLabel>
+              <Select
+                labelId="protocol-label"
+                name="protocol"
+                value={formData.protocol || 'TCP'}
+                onChange={handleChange}
+              >
+                <MenuItem value="TCP">TCP</MenuItem>
+                <MenuItem value="UDP">UDP</MenuItem>
+                <MenuItem value="HTTP">HTTP</MenuItem>
+                <MenuItem value="HTTPS">HTTPS</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          
+          {/* Pool Members Section */}
+          <Grid item xs={12}>
+            <Typography variant="h6" style={{ marginTop: '20px', marginBottom: '10px' }}>
+              Pool Members
+            </Typography>
+            <Typography variant="body2" color="textSecondary" paragraph>
+              Add or remove servers in the load balancing pool
+            </Typography>
             
-            <Grid item xs={12}>
-              <InfoCard title="Environment Information">
-                <Grid container spacing={3}>
-                  <Grid item xs={12} md={6}>
-                    <TextField
-                      fullWidth
-                      select
-                      label="Environment"
-                      value={environment}
-                      onChange={(e) => setEnvironment(e.target.value)}
-                      margin="normal"
-                      variant="outlined"
-                      required
-                      error={!!formErrors.environment}
-                      helperText={formErrors.environment}
-                    >
-                      <MenuItem value="production">Production</MenuItem>
-                      <MenuItem value="staging">Staging</MenuItem>
-                      <MenuItem value="development">Development</MenuItem>
-                      <MenuItem value="test">Test</MenuItem>
-                    </TextField>
-                  </Grid>
-                  <Grid item xs={12} md={6}>
-                    <TextField
-                      fullWidth
-                      select
-                      label="Datacenter"
-                      value={datacenter}
-                      onChange={(e) => setDatacenter(e.target.value)}
-                      margin="normal"
-                      variant="outlined"
-                      required
-                      error={!!formErrors.datacenter}
-                      helperText={formErrors.datacenter}
-                    >
-                      <MenuItem value="dc1">DC1</MenuItem>
-                      <MenuItem value="dc2">DC2</MenuItem>
-                      <MenuItem value="dc3">DC3</MenuItem>
-                    </TextField>
-                  </Grid>
-                  <Grid item xs={12} md={6}>
-                    <TextField
-                      fullWidth
-                      label="App ID"
-                      value={appId}
-                      onChange={(e) => setAppId(e.target.value)}
-                      margin="normal"
-                      variant="outlined"
-                      required
-                      error={!!formErrors.appId}
-                      helperText={formErrors.appId}
-                    />
-                  </Grid>
-                  <Grid item xs={12} md={6}>
-                    <TextField
-                      fullWidth
-                      label="Owner"
-                      value={owner}
-                      onChange={(e) => setOwner(e.target.value)}
-                      margin="normal"
-                      variant="outlined"
-                      required
-                      error={!!formErrors.owner}
-                      helperText={formErrors.owner}
-                    />
-                  </Grid>
-                  <Grid item xs={12} md={6}>
-                    <TextField
-                      fullWidth
-                      select
-                      label="Status"
-                      value={status}
-                      onChange={(e) => setStatus(e.target.value)}
-                      margin="normal"
-                      variant="outlined"
-                      required
-                      error={!!formErrors.status}
-                      helperText={formErrors.status}
-                    >
-                      <MenuItem value="active">Active</MenuItem>
-                      <MenuItem value="pending">Pending</MenuItem>
-                      <MenuItem value="building">Building</MenuItem>
-                      <MenuItem value="inactive">Inactive</MenuItem>
-                      <MenuItem value="error">Error</MenuItem>
-                    </TextField>
-                  </Grid>
-                </Grid>
-              </InfoCard>
-            </Grid>
-            
-            <Grid item xs={12}>
-              <Grid container justifyContent="flex-end" spacing={2}>
-                <Grid item>
-                  <Button
-                    variant="contained"
-                    color="default"
-                    onClick={navigateToMainPage}
-                  >
-                    Cancel
-                  </Button>
-                </Grid>
-                <Grid item>
-                  <Button
-                    variant="contained"
-                    color="primary"
-                    type="submit"
-                    disabled={saving}
-                    startIcon={saving ? <CircularProgress size={20} /> : <Save />}
-                  >
-                    {saving ? 'Saving...' : 'Save Changes'}
-                  </Button>
-                </Grid>
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={3}>
+                <TextField
+                  name="server_name"
+                  label="Server Name"
+                  fullWidth
+                  value={currentPoolMember.server_name || ''}
+                  onChange={handlePoolMemberChange}
+                />
+              </Grid>
+              <Grid item xs={12} sm={3}>
+                <TextField
+                  name="server_ip"
+                  label="Server IP"
+                  fullWidth
+                  value={currentPoolMember.server_ip || ''}
+                  onChange={handlePoolMemberChange}
+                />
+              </Grid>
+              <Grid item xs={12} sm={2}>
+                <TextField
+                  name="server_port"
+                  label="Server Port"
+                  type="number"
+                  fullWidth
+                  value={currentPoolMember.server_port || ''}
+                  onChange={handlePoolMemberChange}
+                />
+              </Grid>
+              <Grid item xs={12} sm={2}>
+                <TextField
+                  name="weight"
+                  label="Weight"
+                  type="number"
+                  fullWidth
+                  value={currentPoolMember.weight || ''}
+                  onChange={handlePoolMemberChange}
+                />
+              </Grid>
+              <Grid item xs={12} sm={2}>
+                <Button
+                  variant="outlined"
+                  color="primary"
+                  onClick={addPoolMember}
+                  style={{ marginTop: '16px' }}
+                  fullWidth
+                >
+                  Add Member
+                </Button>
               </Grid>
             </Grid>
+            
+            {/* Display added pool members */}
+            {poolMembers.length > 0 && (
+              <Paper style={{ marginTop: '20px', padding: '10px' }}>
+                <Typography variant="subtitle1">Pool Members:</Typography>
+                {poolMembers.map((member, index) => (
+                  <Grid container spacing={1} key={index} style={{ marginTop: '8px' }}>
+                    <Grid item xs={3}>
+                      <Typography variant="body2">{member.server_name}</Typography>
+                    </Grid>
+                    <Grid item xs={3}>
+                      <Typography variant="body2">{member.server_ip}</Typography>
+                    </Grid>
+                    <Grid item xs={2}>
+                      <Typography variant="body2">Port: {member.server_port}</Typography>
+                    </Grid>
+                    <Grid item xs={2}>
+                      <Typography variant="body2">Weight: {member.weight}</Typography>
+                    </Grid>
+                    <Grid item xs={2}>
+                      <Button
+                        size="small"
+                        color="secondary"
+                        onClick={() => removePoolMember(index)}
+                      >
+                        Remove
+                      </Button>
+                    </Grid>
+                  </Grid>
+                ))}
+              </Paper>
+            )}
           </Grid>
-        </form>
+          
+          <Grid item xs={12} style={{ marginTop: '20px' }}>
+            <Button
+              variant="contained"
+              color="primary"
+              onClick={handleSubmit}
+              disabled={loading}
+            >
+              {loading ? <CircularProgress size={24} /> : 'Update VIP'}
+            </Button>
+            <Button
+              variant="outlined"
+              onClick={handleBackToView}
+              style={{ marginLeft: '10px' }}
+            >
+              Cancel
+            </Button>
+          </Grid>
+        </Grid>
       </Content>
     </Page>
   );

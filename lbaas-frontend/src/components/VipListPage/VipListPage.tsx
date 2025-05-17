@@ -20,7 +20,7 @@ import {
   Tooltip,
   DialogContentText
 } from '@material-ui/core';
-import { Link as RouterLink } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { AddCircleOutline, Edit, Delete, Visibility } from '@material-ui/icons';
 import {
   InfoCard,
@@ -44,6 +44,7 @@ const TOKEN_STORAGE_KEY = 'lbaas_auth_token';
 export const VipListPage = () => {
   const alertApi = useApi(alertApiRef);
   const lbaasApi = useApi(lbaasFrontendApiRef);
+  const navigate = useNavigate();
   
   const [vips, setVips] = useState<Vip[]>([]);
   const [loading, setLoading] = useState(false);
@@ -56,8 +57,8 @@ export const VipListPage = () => {
   
   // Delete confirmation dialog
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [deleteVipId, setDeleteVipId] = useState<string | null>(null);
-  const [deleteVipName, setDeleteVipName] = useState('');
+  const [deleteVipFqdn, setDeleteVipFqdn] = useState('');
+  const [deleteVipId, setDeleteVipId] = useState('');
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [servicenowIncidentId, setServicenowIncidentId] = useState('');
   const [servicenowIncidentIdError, setServicenowIncidentIdError] = useState('');
@@ -84,7 +85,18 @@ export const VipListPage = () => {
       const data = await lbaasApi.getVips();
       console.log('Fetched VIPs:', data);
       
-      setVips(data);
+      // Add index as a fallback ID if missing
+      const vipsWithFallbackIds = data.map((vip, index) => {
+        if (!vip.id) {
+          console.log(`VIP missing ID, using FQDN as fallback: ${vip.vip_fqdn}`);
+          // Use FQDN as a fallback ID
+          return { ...vip, id: `vip-${vip.vip_fqdn}-${index}` };
+        }
+        return vip;
+      });
+      
+      console.log('VIPs with fallback IDs:', vipsWithFallbackIds);
+      setVips(vipsWithFallbackIds);
     } catch (e: any) {
       console.error('Error fetching VIPs:', e);
       setError(e);
@@ -138,9 +150,35 @@ export const VipListPage = () => {
     setVips([]);
   };
 
-  const openDeleteDialog = (vipId: string, vipName: string) => {
-    setDeleteVipId(vipId);
-    setDeleteVipName(vipName);
+  const handleViewVip = (vip: Vip) => {
+    console.log(`Navigating to view VIP: ${vip.vip_fqdn}`);
+    
+    // Store the VIP data in sessionStorage as a backup
+    sessionStorage.setItem('currentVip', JSON.stringify(vip));
+    
+    // Navigate using the FQDN as the identifier in the URL
+    navigate(`/lbaas-frontend/view/${encodeURIComponent(vip.vip_fqdn)}`);
+  };
+
+  const handleEditVip = (vip: Vip) => {
+    console.log(`Navigating to edit VIP: ${vip.vip_fqdn}`);
+    
+    // Store the VIP data in sessionStorage as a backup
+    sessionStorage.setItem('currentVip', JSON.stringify(vip));
+    
+    // Navigate using the FQDN as the identifier in the URL
+    navigate(`/lbaas-frontend/edit/${encodeURIComponent(vip.vip_fqdn)}`);
+  };
+
+  const handleCreateVip = () => {
+    console.log('Navigating to create new VIP');
+    navigate('/lbaas-frontend/create');
+  };
+
+  const openDeleteDialog = (vip: Vip) => {
+    console.log(`Opening delete dialog for VIP: ${vip.vip_fqdn}`);
+    setDeleteVipFqdn(vip.vip_fqdn);
+    setDeleteVipId(vip.id);
     setServicenowIncidentId('');
     setServicenowIncidentIdError('');
     setDeleteDialogOpen(true);
@@ -148,8 +186,8 @@ export const VipListPage = () => {
 
   const closeDeleteDialog = () => {
     setDeleteDialogOpen(false);
-    setDeleteVipId(null);
-    setDeleteVipName('');
+    setDeleteVipFqdn('');
+    setDeleteVipId('');
     setServicenowIncidentId('');
     setServicenowIncidentIdError('');
   };
@@ -173,7 +211,10 @@ export const VipListPage = () => {
   };
 
   const handleDeleteVip = async () => {
-    if (!deleteVipId) return;
+    if (!deleteVipId) {
+      alertApi.post({ message: 'Cannot delete VIP: Missing ID', severity: 'error' });
+      return;
+    }
     
     if (!validateServicenowIncidentId(servicenowIncidentId)) {
       return;
@@ -287,8 +328,8 @@ export const VipListPage = () => {
             variant="contained"
             color="primary"
             startIcon={<AddCircleOutline />}
-            component={RouterLink}
-            to="/lbaas-frontend/create"
+            onClick={handleCreateVip}
+            style={{ marginLeft: 8 }}
           >
             Create New VIP
           </Button>
@@ -337,8 +378,7 @@ export const VipListPage = () => {
                   variant="contained"
                   color="primary"
                   startIcon={<AddCircleOutline />}
-                  component={RouterLink}
-                  to="/lbaas-frontend/create"
+                  onClick={handleCreateVip}
                   style={{ marginTop: 16 }}
                 >
                   Create New VIP
@@ -369,17 +409,17 @@ export const VipListPage = () => {
                         <TableCell>{getStatusComponent(vip.status)}</TableCell>
                         <TableCell>
                           <Tooltip title="View Details">
-                            <IconButton component={RouterLink} to={`/lbaas-frontend/${vip.id}/view`}>
+                            <IconButton onClick={() => handleViewVip(vip)}>
                               <Visibility />
                             </IconButton>
                           </Tooltip>
                           <Tooltip title="Edit">
-                            <IconButton component={RouterLink} to={`/lbaas-frontend/${vip.id}/edit`}>
+                            <IconButton onClick={() => handleEditVip(vip)}>
                               <Edit />
                             </IconButton>
                           </Tooltip>
                           <Tooltip title="Delete">
-                            <IconButton onClick={() => openDeleteDialog(vip.id, vip.vip_fqdn)}>
+                            <IconButton onClick={() => openDeleteDialog(vip)}>
                               <Delete />
                             </IconButton>
                           </Tooltip>
@@ -398,7 +438,7 @@ export const VipListPage = () => {
           <DialogTitle>Confirm Deletion</DialogTitle>
           <DialogContent>
             <DialogContentText>
-              Are you sure you want to delete the VIP <strong>{deleteVipName}</strong>?
+              Are you sure you want to delete the VIP <strong>{deleteVipFqdn}</strong>?
               This action cannot be undone. Please provide a ServiceNow incident ID for this change.
             </DialogContentText>
             <TextField

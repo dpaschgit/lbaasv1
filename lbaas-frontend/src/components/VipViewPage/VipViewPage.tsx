@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Typography, Grid, Button, CircularProgress, Paper, Divider, List, ListItem, ListItemText } from '@material-ui/core';
-import { Link as RouterLink, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowBack, Edit } from '@material-ui/icons';
 import {
   Header,
@@ -37,48 +37,107 @@ const getStatusComponent = (status?: string) => {
 };
 
 export const VipViewPage = () => {
-  const { vipId } = useParams<{ vipId: string }>();
   const alertApi = useApi(alertApiRef);
   const lbaasApi = useApi(lbaasFrontendApiRef);
+  const navigate = useNavigate();
+  const { fqdn } = useParams<{ fqdn: string }>();
   
   const [vipDetails, setVipDetails] = useState<Vip | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    const fetchData = async () => {
-      if (!vipId) {
-        setError(new Error('VIP ID not found in URL.'));
-        setLoading(false);
-        return;
-      }
+    const loadVipDetails = async () => {
       try {
         setLoading(true);
         setError(null);
         
-        console.log(`Fetching details for VIP: ${vipId}`);
-        const data = await lbaasApi.getVip(vipId);
-        console.log('Fetched VIP details:', data);
+        console.log(`Loading VIP details for FQDN: ${fqdn}`);
         
-        setVipDetails(data);
-      } catch (e: any) {
-        console.error('Error fetching VIP details:', e);
-        setError(e);
-        
-        // If authentication error, redirect to list page
-        if (e.message.includes('Authentication') || e.message.includes('login')) {
-          alertApi.post({ message: 'Authentication required. Please login again.', severity: 'error' });
-          window.location.href = '/lbaas-frontend';
-        } else {
-          alertApi.post({ message: `Error: ${e.message}`, severity: 'error' });
+        if (!fqdn) {
+          // If no FQDN in URL, try to get VIP from sessionStorage
+          const storedVip = sessionStorage.getItem('currentVip');
+          
+          if (!storedVip) {
+            throw new Error('VIP details not found. Please return to the VIP list and try again.');
+          }
+          
+          const vipData = JSON.parse(storedVip) as Vip;
+          console.log('Loaded VIP details from sessionStorage:', vipData);
+          
+          setVipDetails(vipData);
+          return;
         }
+        
+        // Try to fetch VIP details from backend using FQDN
+        try {
+          // First, get all VIPs
+          const allVips = await lbaasApi.getVips();
+          console.log('Fetched all VIPs to find matching FQDN:', allVips);
+          
+          // Find the VIP with matching FQDN
+          const decodedFqdn = decodeURIComponent(fqdn);
+          const matchingVip = allVips.find(vip => vip.vip_fqdn === decodedFqdn);
+          
+          if (!matchingVip) {
+            throw new Error(`VIP with FQDN ${decodedFqdn} not found`);
+          }
+          
+          console.log('Found matching VIP:', matchingVip);
+          
+          // If VIP has an ID, fetch full details
+          if (matchingVip.id) {
+            console.log(`Fetching full VIP details for ID: ${matchingVip.id}`);
+            const vipData = await lbaasApi.getVip(matchingVip.id);
+            console.log('Fetched VIP details from backend:', vipData);
+            setVipDetails(vipData);
+          } else {
+            // If no ID, use the VIP from the list
+            console.log('Using VIP details from list (no ID available)');
+            setVipDetails(matchingVip);
+          }
+        } catch (e) {
+          console.error('Error fetching VIP from backend:', e);
+          
+          // Fallback to sessionStorage if backend fetch fails
+          const storedVip = sessionStorage.getItem('currentVip');
+          
+          if (!storedVip) {
+            throw new Error('Failed to fetch VIP details from backend and no backup found in sessionStorage.');
+          }
+          
+          console.log('Falling back to sessionStorage for VIP details');
+          const vipData = JSON.parse(storedVip) as Vip;
+          setVipDetails(vipData);
+        }
+      } catch (e: any) {
+        console.error('Error loading VIP details:', e);
+        setError(e);
+        alertApi.post({ message: `Error: ${e.message}`, severity: 'error' });
       } finally {
         setLoading(false);
       }
     };
     
-    fetchData();
-  }, [vipId, alertApi, lbaasApi]);
+    loadVipDetails();
+  }, [alertApi, lbaasApi, fqdn]);
+
+  const handleBackToList = () => {
+    navigate('/lbaas-frontend');
+  };
+
+  const handleEditVip = () => {
+    if (!vipDetails) {
+      alertApi.post({ message: 'Cannot edit VIP: Missing details', severity: 'error' });
+      return;
+    }
+    
+    // Store the VIP data in sessionStorage as a backup
+    sessionStorage.setItem('currentVip', JSON.stringify(vipDetails));
+    
+    // Navigate using the FQDN as the identifier in the URL
+    navigate(`/lbaas-frontend/edit/${encodeURIComponent(vipDetails.vip_fqdn)}`);
+  };
 
   if (loading) {
     return (
@@ -102,7 +161,7 @@ export const VipViewPage = () => {
         <Header title="Error" />
         <Content>
           <Typography color="error">{error.message}</Typography>
-          <Button component={RouterLink} to="/lbaas-frontend" variant="outlined" style={{ marginTop: '20px' }}>
+          <Button onClick={handleBackToList} variant="outlined" style={{ marginTop: '20px' }}>
             Back to VIP List
           </Button>
         </Content>
@@ -116,7 +175,7 @@ export const VipViewPage = () => {
         <Header title="VIP Not Found" />
         <Content>
           <Typography>The requested VIP could not be found.</Typography>
-          <Button component={RouterLink} to="/lbaas-frontend" variant="outlined" style={{ marginTop: '20px' }}>
+          <Button onClick={handleBackToList} variant="outlined" style={{ marginTop: '20px' }}>
             Back to VIP List
           </Button>
         </Content>
@@ -129,12 +188,11 @@ export const VipViewPage = () => {
       <Header 
         title={`VIP Details: ${vipDetails.vip_fqdn}`}
         subtitle={`Application ID: ${vipDetails.app_id}`}>
-        <Button component={RouterLink} to="/lbaas-frontend" variant="outlined" startIcon={<ArrowBack />}>
+        <Button onClick={handleBackToList} variant="outlined" startIcon={<ArrowBack />}>
           Back to VIP List
         </Button>
         <Button 
-          component={RouterLink} 
-          to={`/lbaas-frontend/${vipDetails.id}/edit`} 
+          onClick={handleEditVip}
           variant="contained" 
           color="primary" 
           startIcon={<Edit />} 

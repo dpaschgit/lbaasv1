@@ -1,6 +1,5 @@
-import { createApiRef, DiscoveryApi, FetchApi } from '@backstage/core-plugin-api';
+import { createApiRef, DiscoveryApi } from '@backstage/core-plugin-api';
 
-// Define the API interface
 export interface Vip {
   id: string;
   vip_fqdn: string;
@@ -11,15 +10,13 @@ export interface Vip {
   datacenter: string;
   app_id: string;
   owner: string;
-  status: string;
+  status?: string;
   created_at?: string;
   updated_at?: string;
   pool_members?: PoolMember[];
-  secondary_contact_email?: string[];
 }
 
 export interface PoolMember {
-  id?: string;
   server_name: string;
   server_ip: string;
   server_port: number;
@@ -27,244 +24,200 @@ export interface PoolMember {
   status?: string;
 }
 
-export interface AuthToken {
-  access_token: string;
-  token_type: string;
-  expires_in?: number;
-}
-
-export interface DeleteResponse {
-  success: boolean;
-  message?: string;
-}
-
-export interface LbaasApi {
-  login(username: string, password: string): Promise<AuthToken>;
+export interface LbaasFrontendApi {
+  getHealth(): Promise<{ status: string }>;
+  login(username: string, password: string): Promise<{ token: string }>;
   getVips(): Promise<Vip[]>;
   getVip(id: string): Promise<Vip>;
-  createVip(vip: Partial<Vip>): Promise<Vip>;
-  updateVip(id: string, vip: Partial<Vip>, incidentId: string): Promise<Vip>;
-  deleteVip(id: string, incidentId: string): Promise<DeleteResponse>;
-  getHealth(): Promise<{ status: string }>;
+  createVip(vipData: Partial<Vip>): Promise<Vip>;
+  updateVip(id: string, vipData: Partial<Vip>): Promise<Vip>;
+  deleteVip(id: string, servicenowIncidentId: string): Promise<void>;
 }
 
-// Create an API reference with a properly formatted ID
-export const lbaasFrontendApiRef = createApiRef<LbaasApi>({
-  id: 'plugin.lbaas.service',
+export const lbaasFrontendApiRef = createApiRef<LbaasFrontendApi>({
+  id: 'plugin.lbaas-frontend.api',
 });
 
 // Token storage key
 const TOKEN_STORAGE_KEY = 'lbaas_auth_token';
 
-// API implementation
-export class LbaasFrontendApiClient implements LbaasApi {
-  private readonly discoveryApi?: DiscoveryApi;
-  private readonly fetchApi?: FetchApi;
-  
-  // Direct backend URL - change this if your backend is running on a different host or port
+export class LbaasFrontendApiClient implements LbaasFrontendApi {
   private backendBaseUrl: string = 'http://localhost:8000/api/v1';
-
-  constructor(options?: { discoveryApi?: DiscoveryApi; fetchApi?: FetchApi; backendUrl?: string }) {
-    this.discoveryApi = options?.discoveryApi;
-    this.fetchApi = options?.fetchApi;
-    
-    // Allow overriding the backend URL if provided
-    if (options?.backendUrl) {
-      this.backendBaseUrl = options.backendUrl;
-    }
-    
-    console.log(`LbaasFrontendApiClient initialized with backend URL: ${this.backendBaseUrl}`);
+  
+  constructor(options: { discoveryApi?: DiscoveryApi } = {}) {
+    console.log('Initializing LbaasFrontendApiClient');
   }
 
-  // Store token in localStorage
-  private storeToken(token: string): void {
-    localStorage.setItem(TOKEN_STORAGE_KEY, token);
-    console.log('Token stored in localStorage');
-  }
-
-  // Get token from localStorage
-  private getStoredToken(): string | null {
+  private async getAuthToken(): Promise<string | null> {
     const token = localStorage.getItem(TOKEN_STORAGE_KEY);
-    console.log('Retrieved token from localStorage:', token ? 'Token exists' : 'No token found');
     return token;
   }
 
-  // Clear token from localStorage
-  private clearToken(): void {
-    localStorage.removeItem(TOKEN_STORAGE_KEY);
-    console.log('Token cleared from localStorage');
+  private async saveAuthToken(token: string): Promise<void> {
+    localStorage.setItem(TOKEN_STORAGE_KEY, token);
   }
 
-  // Login method - uses OAuth2 password flow
-  async login(username: string, password: string): Promise<AuthToken> {
+  private async clearAuthToken(): Promise<void> {
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+  }
+
+  private async getHeaders(requireAuth: boolean = true): Promise<HeadersInit> {
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+
+    if (requireAuth) {
+      const token = await this.getAuthToken();
+      if (!token && requireAuth) {
+        throw new Error('Authentication required. Please login.');
+      }
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    return headers;
+  }
+
+  async getHealth(): Promise<{ status: string }> {
+    console.log('Checking API health');
+    
     try {
-      console.log(`Attempting login with username: ${username}`);
-      
-      // Create form data for OAuth2 password flow
-      const formData = new URLSearchParams();
-      formData.append('username', username);
-      formData.append('password', password);
-      
-      // Use direct backend URL for authentication
-      const url = `${this.backendBaseUrl}/auth/token`;
-      console.log(`Making POST request to ${url}`);
-      
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: formData.toString(),
-        // Enable credentials for CORS if needed
-        credentials: 'include',
+      const response = await fetch(`${this.backendBaseUrl}/health`, {
+        method: 'GET',
+        headers: await this.getHeaders(false),
       });
 
-      console.log('Login response status:', response.status);
+      if (!response.ok) {
+        throw new Error(`Health check failed with status: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Health check error:', error);
+      throw error;
+    }
+  }
+
+  async login(username: string, password: string): Promise<{ token: string }> {
+    console.log(`Attempting login with username: ${username}`);
+    
+    try {
+      const response = await fetch(`${this.backendBaseUrl}/auth/token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username, password }),
+      });
+
+      console.log(`Login response status: ${response.status}`);
       
       if (!response.ok) {
         let errorMessage = `Login failed with status: ${response.status}`;
         try {
           const errorData = await response.json();
-          errorMessage = errorData.detail || errorData.message || errorMessage;
+          errorMessage = errorData.detail || errorMessage;
         } catch (e) {
           console.error('Error parsing error response:', e);
         }
-        console.error('Login failed:', errorMessage);
         throw new Error(errorMessage);
       }
 
       const data = await response.json();
-      console.log('Login successful, received token');
+      console.log('Login successful, token received');
       
-      // Store the token for future use
-      this.storeToken(data.access_token);
-      return data;
+      // Save token to localStorage
+      await this.saveAuthToken(data.access_token);
+      
+      return { token: data.access_token };
     } catch (error) {
       console.error('Login error:', error);
       throw error;
     }
   }
 
-  // List VIPs
   async getVips(): Promise<Vip[]> {
+    console.log('Fetching all VIPs');
+    
     try {
-      const authToken = this.getStoredToken();
-      
-      if (!authToken) {
-        throw new Error('Authentication required');
-      }
-
-      const url = `${this.backendBaseUrl}/vips`;
-      console.log(`Making GET request to ${url}`);
-      
-      const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-        },
-        credentials: 'include',
+      const response = await fetch(`${this.backendBaseUrl}/vips`, {
+        method: 'GET',
+        headers: await this.getHeaders(),
       });
 
-      console.log('getVips response status:', response.status);
-      
       if (!response.ok) {
         if (response.status === 401) {
-          this.clearToken(); // Clear invalid token
-          throw new Error('Authentication expired. Please login again.');
+          await this.clearAuthToken();
+          throw new Error('Authentication required. Please login.');
         }
-        throw new Error(`Failed to fetch VIPs: ${response.statusText}`);
+        throw new Error(`Failed to fetch VIPs with status: ${response.status}`);
       }
 
       const data = await response.json();
-      console.log(`Retrieved ${data.length} VIPs`);
+      console.log(`Fetched ${data.length} VIPs`);
       return data;
     } catch (error) {
-      console.error('Error listing VIPs:', error);
+      console.error('Error fetching VIPs:', error);
       throw error;
     }
   }
 
-  // Get a specific VIP
   async getVip(id: string): Promise<Vip> {
+    console.log(`Fetching VIP with ID: ${id}`);
+    
     try {
-      const authToken = this.getStoredToken();
-      
-      if (!authToken) {
-        throw new Error('Authentication required');
-      }
-
-      const url = `${this.backendBaseUrl}/vips/${id}`;
-      console.log(`Making GET request to ${url}`);
-      
-      const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-        },
-        credentials: 'include',
+      const response = await fetch(`${this.backendBaseUrl}/vips/${id}`, {
+        method: 'GET',
+        headers: await this.getHeaders(),
       });
 
-      console.log('getVip response status:', response.status);
-      
       if (!response.ok) {
         if (response.status === 401) {
-          this.clearToken(); // Clear invalid token
-          throw new Error('Authentication expired. Please login again.');
+          await this.clearAuthToken();
+          throw new Error('Authentication required. Please login.');
         }
-        throw new Error(`Failed to fetch VIP: ${response.statusText}`);
+        if (response.status === 404) {
+          throw new Error(`VIP with ID ${id} not found`);
+        }
+        throw new Error(`Failed to fetch VIP with status: ${response.status}`);
       }
 
       const data = await response.json();
-      console.log('Retrieved VIP details:', data.id);
+      console.log('Fetched VIP details:', data);
       return data;
     } catch (error) {
-      console.error('Error getting VIP:', error);
+      console.error(`Error fetching VIP ${id}:`, error);
       throw error;
     }
   }
 
-  // Create a new VIP
-  async createVip(vip: Partial<Vip>): Promise<Vip> {
+  async createVip(vipData: Partial<Vip>): Promise<Vip> {
+    console.log('Creating new VIP:', vipData);
+    
     try {
-      const authToken = this.getStoredToken();
-      
-      if (!authToken) {
-        throw new Error('Authentication required');
-      }
-
-      const url = `${this.backendBaseUrl}/vips`;
-      console.log(`Making POST request to ${url}`);
-      console.log('VIP data:', vip);
-      
-      const response = await fetch(url, {
+      const response = await fetch(`${this.backendBaseUrl}/vips`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`,
-        },
-        body: JSON.stringify(vip),
-        credentials: 'include',
+        headers: await this.getHeaders(),
+        body: JSON.stringify(vipData),
       });
 
-      console.log('createVip response status:', response.status);
-      
       if (!response.ok) {
         if (response.status === 401) {
-          this.clearToken(); // Clear invalid token
-          throw new Error('Authentication expired. Please login again.');
+          await this.clearAuthToken();
+          throw new Error('Authentication required. Please login.');
         }
         
-        let errorMessage = `Failed to create VIP: ${response.statusText}`;
+        let errorMessage = `Failed to create VIP with status: ${response.status}`;
         try {
           const errorData = await response.json();
-          errorMessage = errorData.detail || errorData.message || errorMessage;
+          errorMessage = errorData.detail || errorMessage;
         } catch (e) {
           console.error('Error parsing error response:', e);
         }
-        
         throw new Error(errorMessage);
       }
 
       const data = await response.json();
-      console.log('Created new VIP:', data.id);
+      console.log('VIP created successfully:', data);
       return data;
     } catch (error) {
       console.error('Error creating VIP:', error);
@@ -272,131 +225,76 @@ export class LbaasFrontendApiClient implements LbaasApi {
     }
   }
 
-  // Update an existing VIP
-  async updateVip(id: string, vip: Partial<Vip>, incidentId: string): Promise<Vip> {
+  async updateVip(id: string, vipData: Partial<Vip>): Promise<Vip> {
+    console.log(`Updating VIP ${id}:`, vipData);
+    
     try {
-      const authToken = this.getStoredToken();
-      
-      if (!authToken) {
-        throw new Error('Authentication required');
-      }
-
-      const url = `${this.backendBaseUrl}/vips/${id}`;
-      console.log(`Making PUT request to ${url}`);
-      console.log('Update data:', { ...vip, servicenow_incident_id: incidentId });
-      
-      const response = await fetch(url, {
+      const response = await fetch(`${this.backendBaseUrl}/vips/${id}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`,
-        },
-        body: JSON.stringify({
-          ...vip,
-          servicenow_incident_id: incidentId
-        }),
-        credentials: 'include',
+        headers: await this.getHeaders(),
+        body: JSON.stringify(vipData),
       });
 
-      console.log('updateVip response status:', response.status);
-      
       if (!response.ok) {
         if (response.status === 401) {
-          this.clearToken(); // Clear invalid token
-          throw new Error('Authentication expired. Please login again.');
+          await this.clearAuthToken();
+          throw new Error('Authentication required. Please login.');
+        }
+        if (response.status === 404) {
+          throw new Error(`VIP with ID ${id} not found`);
         }
         
-        let errorMessage = `Failed to update VIP: ${response.statusText}`;
+        let errorMessage = `Failed to update VIP with status: ${response.status}`;
         try {
           const errorData = await response.json();
-          errorMessage = errorData.detail || errorData.message || errorMessage;
+          errorMessage = errorData.detail || errorMessage;
         } catch (e) {
           console.error('Error parsing error response:', e);
         }
-        
         throw new Error(errorMessage);
       }
 
       const data = await response.json();
-      console.log('Updated VIP:', data.id);
+      console.log('VIP updated successfully:', data);
       return data;
     } catch (error) {
-      console.error('Error updating VIP:', error);
+      console.error(`Error updating VIP ${id}:`, error);
       throw error;
     }
   }
 
-  // Delete a VIP
-  async deleteVip(id: string, incidentId: string): Promise<DeleteResponse> {
+  async deleteVip(id: string, servicenowIncidentId: string): Promise<void> {
+    console.log(`Deleting VIP ${id} with incident ID: ${servicenowIncidentId}`);
+    
     try {
-      const authToken = this.getStoredToken();
-      
-      if (!authToken) {
-        throw new Error('Authentication required');
-      }
-
-      const url = `${this.backendBaseUrl}/vips/${id}`;
-      console.log(`Making DELETE request to ${url}`);
-      console.log('Delete payload:', { servicenow_incident_id: incidentId });
-      
-      const response = await fetch(url, {
+      const response = await fetch(`${this.backendBaseUrl}/vips/${id}`, {
         method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`,
-        },
-        body: JSON.stringify({ servicenow_incident_id: incidentId }),
-        credentials: 'include',
+        headers: await this.getHeaders(),
+        body: JSON.stringify({ servicenow_incident_id: servicenowIncidentId }),
       });
 
-      console.log('deleteVip response status:', response.status);
-      
       if (!response.ok) {
         if (response.status === 401) {
-          this.clearToken(); // Clear invalid token
-          throw new Error('Authentication expired. Please login again.');
+          await this.clearAuthToken();
+          throw new Error('Authentication required. Please login.');
+        }
+        if (response.status === 404) {
+          throw new Error(`VIP with ID ${id} not found`);
         }
         
-        let errorMessage = `Failed to delete VIP: ${response.statusText}`;
+        let errorMessage = `Failed to delete VIP with status: ${response.status}`;
         try {
           const errorData = await response.json();
-          errorMessage = errorData.detail || errorData.message || errorMessage;
+          errorMessage = errorData.detail || errorMessage;
         } catch (e) {
           console.error('Error parsing error response:', e);
         }
-        
         throw new Error(errorMessage);
       }
 
-      console.log('VIP deleted successfully');
-      return { success: true, message: 'VIP deleted successfully' };
+      console.log(`VIP ${id} deleted successfully`);
     } catch (error) {
-      console.error('Error deleting VIP:', error);
-      throw error;
-    }
-  }
-
-  // Health check
-  async getHealth(): Promise<{ status: string }> {
-    try {
-      const url = `${this.backendBaseUrl}/health`;
-      console.log(`Making GET request to ${url}`);
-      
-      const response = await fetch(url, {
-        credentials: 'include',
-      });
-      
-      console.log('Health check response status:', response.status);
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch health: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
-      console.log('Health check result:', data);
-      return data;
-    } catch (error) {
-      console.error('Error checking health:', error);
+      console.error(`Error deleting VIP ${id}:`, error);
       throw error;
     }
   }
