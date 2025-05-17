@@ -1,383 +1,424 @@
-import React, { useState } from 'react';
-import { Typography, Grid, Button, CircularProgress, TextField, Paper, FormControl, InputLabel, Select, MenuItem } from '@material-ui/core';
-import { useNavigate } from 'react-router-dom';
-import { ArrowBack } from '@material-ui/icons';
+import React, { useEffect, useState } from 'react';
+import { Typography, Grid, Button, CircularProgress, TextField, FormControl, InputLabel, Select, MenuItem, List, ListItem, ListItemText, ListItemSecondaryAction, IconButton, Divider, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle } from '@material-ui/core';
+import { Link as RouterLink, useNavigate } from 'react-router-dom';
+import { ArrowBack, Add, Delete } from '@material-ui/icons';
 import {
   Header,
   Page,
   Content,
   ContentHeader,
   SupportButton,
+  InfoCard,
 } from '@backstage/core-components';
-import { useApi, alertApiRef } from '@backstage/core-plugin-api';
-import { lbaasFrontendApiRef, Vip, PoolMember } from '../../api';
+import { useApi, alertApiRef, identityApiRef } from '@backstage/core-plugin-api';
+import { api } from '../../api';
+
+interface ServerData {
+  id: string;
+  name: string;
+  ip: string;
+  owner: string;
+  environment: string;
+  datacenter: string;
+}
+
+interface PoolMember {
+  server_id: string;
+  server_name: string;
+  server_ip: string;
+  server_port: number;
+  weight: number;
+}
 
 export const VipCreatePage = () => {
   const alertApi = useApi(alertApiRef);
-  const lbaasApi = useApi(lbaasFrontendApiRef);
+  const identityApi = useApi(identityApiRef);
   const navigate = useNavigate();
-  
   const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState<Partial<Vip>>({
+  const [incidentId, setIncidentId] = useState('');
+  const [showIncidentDialog, setShowIncidentDialog] = useState(false);
+  const [availableServers, setAvailableServers] = useState<ServerData[]>([]);
+  const [loadingServers, setLoadingServers] = useState(false);
+
+  // Form state
+  const [formData, setFormData] = useState({
     vip_fqdn: '',
-    vip_ip: '',
-    port: 443,
-    protocol: 'HTTPS',
-    environment: 'DEV',
-    datacenter: 'LADC',
     app_id: '',
-    owner: '',
-    pool_members: []
-  });
-  
-  // Pool member management
-  const [poolMembers, setPoolMembers] = useState<PoolMember[]>([]);
-  const [currentPoolMember, setCurrentPoolMember] = useState<PoolMember>({
-    server_name: '',
-    server_ip: '',
-    server_port: 8443,
-    weight: 1
+    environment: 'DEV', // Default value
+    datacenter: 'LADC', // Default value
+    port: 80,
+    protocol: 'TCP',
+    lb_method: 'ROUND_ROBIN',
+    pool_members: [] as PoolMember[],
   });
 
+  // Fetch available servers when environment or datacenter changes
+  useEffect(() => {
+    const fetchServers = async () => {
+      setLoadingServers(true);
+      try {
+        const token = await identityApi.getCredentials();
+        // Call the CMDB API to get servers filtered by environment and datacenter
+        const response = await api.get(
+          `/cmdb/servers?environment=${formData.environment}&datacenter=${formData.datacenter}`,
+          token?.token
+        );
+        
+        if (response.success) {
+          setAvailableServers(response.data);
+        } else {
+          throw new Error(response.error || 'Failed to fetch servers');
+        }
+      } catch (e: any) {
+        alertApi.post({ message: `Error fetching servers: ${e.message}`, severity: 'error' });
+        setAvailableServers([]);
+      } finally {
+        setLoadingServers(false);
+      }
+    };
+    
+    fetchServers();
+  }, [formData.environment, formData.datacenter, alertApi, identityApi]);
+
   const handleChange = (event: React.ChangeEvent<{ name?: string; value: unknown }>) => {
-    const name = event.target.name as keyof Vip;
+    const name = event.target.name as keyof typeof formData;
     setFormData({
       ...formData,
       [name]: event.target.value,
     });
   };
-  
+
   const handleNumericChange = (event: React.ChangeEvent<{ name?: string; value: unknown }>) => {
-    const name = event.target.name as keyof Vip;
+    const name = event.target.name as keyof typeof formData;
     const value = event.target.value as string;
     setFormData({
       ...formData,
       [name]: value === '' ? '' : Number(value),
     });
   };
-  
-  const handlePoolMemberChange = (event: React.ChangeEvent<{ name?: string; value: unknown }>) => {
-    const name = event.target.name as keyof PoolMember;
-    const value = event.target.value as string;
-    
-    setCurrentPoolMember({
-      ...currentPoolMember,
-      [name]: name === 'server_port' || name === 'weight' 
-        ? (value === '' ? '' : Number(value)) 
-        : value,
-    });
-  };
-  
-  const addPoolMember = () => {
-    if (!currentPoolMember.server_name || !currentPoolMember.server_ip) {
-      alertApi.post({ message: 'Server name and IP are required for pool members', severity: 'error' });
+
+  const handleAddServer = (server: ServerData) => {
+    // Check if server is already added
+    if (formData.pool_members.some(member => member.server_id === server.id)) {
+      alertApi.post({ message: 'Server is already added to pool members', severity: 'warning' });
       return;
     }
     
-    const updatedPoolMembers = [...poolMembers, currentPoolMember];
-    setPoolMembers(updatedPoolMembers);
+    // Add server to pool members
+    const newMember: PoolMember = {
+      server_id: server.id,
+      server_name: server.name,
+      server_ip: server.ip,
+      server_port: 8080, // Default port, can be changed later
+      weight: 1, // Default weight
+    };
+    
     setFormData({
       ...formData,
-      pool_members: updatedPoolMembers
-    });
-    
-    // Reset the form for the next pool member
-    setCurrentPoolMember({
-      server_name: '',
-      server_ip: '',
-      server_port: 8443,
-      weight: 1
+      pool_members: [...formData.pool_members, newMember],
     });
   };
-  
-  const removePoolMember = (index: number) => {
-    const updatedPoolMembers = poolMembers.filter((_, i) => i !== index);
-    setPoolMembers(updatedPoolMembers);
+
+  const handleRemoveServer = (serverId: string) => {
     setFormData({
       ...formData,
-      pool_members: updatedPoolMembers
+      pool_members: formData.pool_members.filter(member => member.server_id !== serverId),
     });
   };
 
-  const validateForm = () => {
-    if (!formData.vip_fqdn) {
-      alertApi.post({ message: 'VIP FQDN is required', severity: 'error' });
-      return false;
-    }
+  const handleUpdatePoolMember = (index: number, field: keyof PoolMember, value: any) => {
+    const updatedMembers = [...formData.pool_members];
+    updatedMembers[index] = {
+      ...updatedMembers[index],
+      [field]: field === 'server_port' || field === 'weight' ? Number(value) : value,
+    };
     
-    if (!formData.app_id) {
-      alertApi.post({ message: 'Application ID is required', severity: 'error' });
-      return false;
-    }
-    
-    if (!formData.port || formData.port <= 0) {
-      alertApi.post({ message: 'Valid port number is required', severity: 'error' });
-      return false;
-    }
-    
-    return true;
+    setFormData({
+      ...formData,
+      pool_members: updatedMembers,
+    });
   };
 
-  const handleBackToList = () => {
-    navigate('/lbaas-frontend');
-  };
-
-  const handleSubmit = async () => {
-    if (!validateForm()) {
+  const handleSubmitPrompt = () => {
+    // Basic validation before showing incident dialog
+    if (!formData.vip_fqdn || !formData.app_id) {
+      alertApi.post({ message: 'VIP FQDN and App ID are required.', severity: 'error' });
       return;
     }
     
+    if (formData.pool_members.length === 0) {
+      alertApi.post({ message: 'At least one server must be added to the pool.', severity: 'error' });
+      return;
+    }
+    
+    setShowIncidentDialog(true);
+  };
+
+  const handleCreateVip = async () => {
+    if (!incidentId.trim()) {
+      alertApi.post({ message: 'ServiceNow Incident ID is required.', severity: 'error' });
+      return;
+    }
+    setLoading(true);
     try {
-      setLoading(true);
+      const token = await identityApi.getCredentials();
       
-      console.log('Creating new VIP with data:', formData);
-      const result = await lbaasApi.createVip(formData);
+      // Call the API to create the VIP
+      const response = await api.post('/vips', {
+        ...formData,
+        servicenow_incident_id: incidentId.trim(),
+      }, token?.token);
       
-      alertApi.post({ message: `VIP ${result.vip_fqdn} created successfully`, severity: 'success' });
-      
-      // Store the created VIP in sessionStorage for potential view/edit operations
-      if (result) {
-        sessionStorage.setItem('currentVip', JSON.stringify(result));
-        
-        // Navigate to the view page with the FQDN in the URL
-        navigate(`/lbaas-frontend/view/${encodeURIComponent(result.vip_fqdn)}`);
+      if (response.success) {
+        alertApi.post({ message: `VIP ${formData.vip_fqdn} created successfully.`, severity: 'success' });
+        navigate('/lbaas-frontend'); // Navigate back to the list page
       } else {
-        // If no result, go back to list
-        navigate('/lbaas-frontend');
+        throw new Error(response.error || 'Failed to create VIP');
       }
     } catch (e: any) {
-      console.error('Error creating VIP:', e);
-      
-      // If authentication error, redirect to list page
-      if (e.message.includes('Authentication') || e.message.includes('login')) {
-        alertApi.post({ message: 'Authentication required. Please login again.', severity: 'error' });
-        navigate('/lbaas-frontend');
-      } else {
-        alertApi.post({ message: `Error: ${e.message}`, severity: 'error' });
-      }
+      alertApi.post({ message: `Error creating VIP: ${e.message}`, severity: 'error' });
     } finally {
       setLoading(false);
+      setShowIncidentDialog(false);
+      setIncidentId('');
     }
   };
 
   return (
     <Page themeId="tool">
-      <Header title="Create New VIP" subtitle="Configure a new Load Balancer VIP">
-        <Button onClick={handleBackToList} variant="outlined" startIcon={<ArrowBack />}>
+      <Header title="Create New VIP" subtitle="Request a new Load Balancer Virtual IP Address">
+        <Button component={RouterLink} to="/lbaas-frontend" variant="outlined" startIcon={<ArrowBack />}>
           Back to VIP List
         </Button>
       </Header>
       <Content>
-        <ContentHeader title="VIP Configuration">
-          <SupportButton>Fill in the details to create a new VIP.</SupportButton>
+        <ContentHeader title="VIP Configuration Details">
+          <SupportButton>Fill in the details below to request a new VIP.</SupportButton>
         </ContentHeader>
-        <Grid container spacing={3} component={Paper} style={{ padding: '20px' }}>
-          <Grid item xs={12} sm={6}>
-            <TextField
-              required
-              name="vip_fqdn"
-              label="VIP FQDN"
-              fullWidth
-              value={formData.vip_fqdn || ''}
-              onChange={handleChange}
-              helperText="Fully Qualified Domain Name for the VIP"
-            />
-          </Grid>
-          <Grid item xs={12} sm={6}>
-            <TextField
-              required
-              name="app_id"
-              label="Application ID"
-              fullWidth
-              value={formData.app_id || ''}
-              onChange={handleChange}
-              helperText="Unique identifier for the application"
-            />
-          </Grid>
-          <Grid item xs={12} sm={6}>
-            <TextField
-              name="vip_ip"
-              label="VIP IP Address"
-              fullWidth
-              value={formData.vip_ip || ''}
-              onChange={handleChange}
-              helperText="Optional: IP address will be assigned automatically if left blank"
-            />
-          </Grid>
-          <Grid item xs={12} sm={6}>
-            <TextField
-              name="owner"
-              label="Owner"
-              fullWidth
-              value={formData.owner || ''}
-              onChange={handleChange}
-              helperText="Owner or responsible team for this VIP"
-            />
-          </Grid>
-          <Grid item xs={12} sm={3}>
-            <FormControl fullWidth required>
-              <InputLabel id="environment-label">Environment</InputLabel>
-              <Select
-                labelId="environment-label"
-                name="environment"
-                value={formData.environment || 'DEV'}
-                onChange={handleChange}
-              >
-                <MenuItem value="DEV">DEV</MenuItem>
-                <MenuItem value="UAT">UAT</MenuItem>
-                <MenuItem value="PROD">PROD</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} sm={3}>
-            <FormControl fullWidth required>
-              <InputLabel id="datacenter-label">Datacenter</InputLabel>
-              <Select
-                labelId="datacenter-label"
-                name="datacenter"
-                value={formData.datacenter || 'LADC'}
-                onChange={handleChange}
-              >
-                <MenuItem value="LADC">LADC</MenuItem>
-                <MenuItem value="NYDC">NYDC</MenuItem>
-                <MenuItem value="UKDC">UKDC</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} sm={3}>
-            <TextField
-              required
-              name="port"
-              label="Port"
-              type="number"
-              fullWidth
-              value={formData.port || ''}
-              onChange={handleNumericChange}
-              helperText="Port number for the VIP"
-            />
-          </Grid>
-          <Grid item xs={12} sm={3}>
-            <FormControl fullWidth required>
-              <InputLabel id="protocol-label">Protocol</InputLabel>
-              <Select
-                labelId="protocol-label"
-                name="protocol"
-                value={formData.protocol || 'TCP'}
-                onChange={handleChange}
-              >
-                <MenuItem value="TCP">TCP</MenuItem>
-                <MenuItem value="UDP">UDP</MenuItem>
-                <MenuItem value="HTTP">HTTP</MenuItem>
-                <MenuItem value="HTTPS">HTTPS</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-          
-          {/* Pool Members Section */}
+        
+        <Grid container spacing={3}>
+          {/* Basic VIP Information */}
           <Grid item xs={12}>
-            <Typography variant="h6" style={{ marginTop: '20px', marginBottom: '10px' }}>
-              Pool Members
-            </Typography>
-            <Typography variant="body2" color="textSecondary" paragraph>
-              Add servers to the load balancing pool
-            </Typography>
-            
-            <Grid container spacing={2}>
-              <Grid item xs={12} sm={3}>
-                <TextField
-                  name="server_name"
-                  label="Server Name"
-                  fullWidth
-                  value={currentPoolMember.server_name || ''}
-                  onChange={handlePoolMemberChange}
-                />
+            <InfoCard title="Basic Information">
+              <Grid container spacing={3}>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    required
+                    name="vip_fqdn"
+                    label="VIP FQDN"
+                    fullWidth
+                    value={formData.vip_fqdn}
+                    onChange={handleChange}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    required
+                    name="app_id"
+                    label="Application ID"
+                    fullWidth
+                    value={formData.app_id}
+                    onChange={handleChange}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={3}>
+                  <FormControl fullWidth required>
+                    <InputLabel id="environment-label">Environment</InputLabel>
+                    <Select
+                      labelId="environment-label"
+                      name="environment"
+                      value={formData.environment}
+                      onChange={handleChange}
+                    >
+                      <MenuItem value="DEV">DEV</MenuItem>
+                      <MenuItem value="UAT">UAT</MenuItem>
+                      <MenuItem value="PROD">PROD</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} sm={3}>
+                  <FormControl fullWidth required>
+                    <InputLabel id="datacenter-label">Datacenter</InputLabel>
+                    <Select
+                      labelId="datacenter-label"
+                      name="datacenter"
+                      value={formData.datacenter}
+                      onChange={handleChange}
+                    >
+                      <MenuItem value="LADC">LADC</MenuItem>
+                      <MenuItem value="NYDC">NYDC</MenuItem>
+                      <MenuItem value="UKDC">UKDC</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} sm={3}>
+                  <TextField
+                    required
+                    name="port"
+                    label="Port"
+                    type="number"
+                    fullWidth
+                    value={formData.port}
+                    onChange={handleNumericChange}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={3}>
+                  <FormControl fullWidth required>
+                    <InputLabel id="protocol-label">Protocol</InputLabel>
+                    <Select
+                      labelId="protocol-label"
+                      name="protocol"
+                      value={formData.protocol}
+                      onChange={handleChange}
+                    >
+                      <MenuItem value="TCP">TCP</MenuItem>
+                      <MenuItem value="UDP">UDP</MenuItem>
+                      <MenuItem value="HTTP">HTTP</MenuItem>
+                      <MenuItem value="HTTPS">HTTPS</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <FormControl fullWidth required>
+                    <InputLabel id="lb-method-label">Load Balancing Method</InputLabel>
+                    <Select
+                      labelId="lb-method-label"
+                      name="lb_method"
+                      value={formData.lb_method}
+                      onChange={handleChange}
+                    >
+                      <MenuItem value="ROUND_ROBIN">Round Robin</MenuItem>
+                      <MenuItem value="LEAST_CONNECTIONS">Least Connections</MenuItem>
+                      <MenuItem value="SOURCE_IP">Source IP</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
               </Grid>
-              <Grid item xs={12} sm={3}>
-                <TextField
-                  name="server_ip"
-                  label="Server IP"
-                  fullWidth
-                  value={currentPoolMember.server_ip || ''}
-                  onChange={handlePoolMemberChange}
-                />
-              </Grid>
-              <Grid item xs={12} sm={2}>
-                <TextField
-                  name="server_port"
-                  label="Server Port"
-                  type="number"
-                  fullWidth
-                  value={currentPoolMember.server_port || ''}
-                  onChange={handlePoolMemberChange}
-                />
-              </Grid>
-              <Grid item xs={12} sm={2}>
-                <TextField
-                  name="weight"
-                  label="Weight"
-                  type="number"
-                  fullWidth
-                  value={currentPoolMember.weight || ''}
-                  onChange={handlePoolMemberChange}
-                />
-              </Grid>
-              <Grid item xs={12} sm={2}>
-                <Button
-                  variant="outlined"
-                  color="primary"
-                  onClick={addPoolMember}
-                  style={{ marginTop: '16px' }}
-                  fullWidth
-                >
-                  Add Member
-                </Button>
-              </Grid>
-            </Grid>
-            
-            {/* Display added pool members */}
-            {poolMembers.length > 0 && (
-              <Paper style={{ marginTop: '20px', padding: '10px' }}>
-                <Typography variant="subtitle1">Added Pool Members:</Typography>
-                {poolMembers.map((member, index) => (
-                  <Grid container spacing={1} key={index} style={{ marginTop: '8px' }}>
-                    <Grid item xs={3}>
-                      <Typography variant="body2">{member.server_name}</Typography>
-                    </Grid>
-                    <Grid item xs={3}>
-                      <Typography variant="body2">{member.server_ip}</Typography>
-                    </Grid>
-                    <Grid item xs={2}>
-                      <Typography variant="body2">Port: {member.server_port}</Typography>
-                    </Grid>
-                    <Grid item xs={2}>
-                      <Typography variant="body2">Weight: {member.weight}</Typography>
-                    </Grid>
-                    <Grid item xs={2}>
-                      <Button
-                        size="small"
-                        color="secondary"
-                        onClick={() => removePoolMember(index)}
-                      >
-                        Remove
-                      </Button>
-                    </Grid>
-                  </Grid>
-                ))}
-              </Paper>
-            )}
+            </InfoCard>
           </Grid>
           
-          <Grid item xs={12} style={{ marginTop: '20px' }}>
+          {/* Server Selection */}
+          <Grid item xs={12}>
+            <InfoCard title="Server Selection">
+              <Grid container spacing={3}>
+                <Grid item xs={12} sm={6}>
+                  <Typography variant="h6">Available Servers</Typography>
+                  <Typography variant="body2" color="textSecondary">
+                    Showing servers for {formData.environment} in {formData.datacenter} that you have access to
+                  </Typography>
+                  {loadingServers ? (
+                    <CircularProgress />
+                  ) : availableServers.length === 0 ? (
+                    <Typography>No servers available for the selected environment and datacenter.</Typography>
+                  ) : (
+                    <List>
+                      {availableServers.map(server => (
+                        <ListItem key={server.id}>
+                          <ListItemText
+                            primary={server.name}
+                            secondary={`IP: ${server.ip} | Owner: ${server.owner}`}
+                          />
+                          <ListItemSecondaryAction>
+                            <IconButton edge="end" onClick={() => handleAddServer(server)}>
+                              <Add />
+                            </IconButton>
+                          </ListItemSecondaryAction>
+                        </ListItem>
+                      ))}
+                    </List>
+                  )}
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Typography variant="h6">Selected Pool Members</Typography>
+                  {formData.pool_members.length === 0 ? (
+                    <Typography>No servers selected. Add servers from the available list.</Typography>
+                  ) : (
+                    <List>
+                      {formData.pool_members.map((member, index) => (
+                        <React.Fragment key={member.server_id}>
+                          <ListItem>
+                            <ListItemText
+                              primary={member.server_name}
+                              secondary={`IP: ${member.server_ip}`}
+                            />
+                            <Grid container spacing={2} alignItems="center">
+                              <Grid item>
+                                <TextField
+                                  label="Port"
+                                  type="number"
+                                  size="small"
+                                  value={member.server_port}
+                                  onChange={(e) => handleUpdatePoolMember(index, 'server_port', e.target.value)}
+                                  style={{ width: '80px' }}
+                                />
+                              </Grid>
+                              <Grid item>
+                                <TextField
+                                  label="Weight"
+                                  type="number"
+                                  size="small"
+                                  value={member.weight}
+                                  onChange={(e) => handleUpdatePoolMember(index, 'weight', e.target.value)}
+                                  style={{ width: '80px' }}
+                                />
+                              </Grid>
+                              <Grid item>
+                                <IconButton edge="end" onClick={() => handleRemoveServer(member.server_id)}>
+                                  <Delete />
+                                </IconButton>
+                              </Grid>
+                            </Grid>
+                          </ListItem>
+                          <Divider />
+                        </React.Fragment>
+                      ))}
+                    </List>
+                  )}
+                </Grid>
+              </Grid>
+            </InfoCard>
+          </Grid>
+          
+          {/* Submit Button */}
+          <Grid item xs={12} style={{ marginTop: '20px', textAlign: 'center' }}>
             <Button
               variant="contained"
               color="primary"
-              onClick={handleSubmit}
+              onClick={handleSubmitPrompt}
               disabled={loading}
+              size="large"
             >
-              {loading ? <CircularProgress size={24} /> : 'Create VIP'}
+              {loading ? <CircularProgress size={24} /> : 'Submit VIP Request'}
             </Button>
           </Grid>
         </Grid>
+
+        {/* Incident ID Dialog */}
+        <Dialog open={showIncidentDialog} onClose={() => setShowIncidentDialog(false)}>
+          <DialogTitle>Confirm VIP Creation</DialogTitle>
+          <DialogContent>
+            <DialogContentText>
+              Please provide a valid ServiceNow Incident ID to proceed with creating this VIP.
+            </DialogContentText>
+            <TextField
+              autoFocus
+              margin="dense"
+              id="incidentIdCreate"
+              label="ServiceNow Incident ID"
+              type="text"
+              fullWidth
+              variant="standard"
+              value={incidentId}
+              onChange={(e) => setIncidentId(e.target.value)}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setShowIncidentDialog(false)}>Cancel</Button>
+            <Button onClick={handleCreateVip} color="primary" disabled={!incidentId.trim() || loading}>
+              {loading ? <CircularProgress size={24} /> : 'Create VIP'}
+            </Button>
+          </DialogActions>
+        </Dialog>
       </Content>
     </Page>
   );

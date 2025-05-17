@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Typography, Grid, Button, CircularProgress, Paper, Divider, List, ListItem, ListItemText } from '@material-ui/core';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link as RouterLink, useParams, useNavigate } from 'react-router-dom';
 import { ArrowBack, Edit } from '@material-ui/icons';
 import {
   Header,
@@ -14,145 +14,112 @@ import {
   StatusAborted,
   StatusRunning
 } from '@backstage/core-components';
-import { useApi, alertApiRef } from '@backstage/core-plugin-api';
-import { lbaasFrontendApiRef, Vip, PoolMember } from '../../api';
+import { useApi, alertApiRef, identityApiRef } from '@backstage/core-plugin-api';
 
-const getStatusComponent = (status?: string) => {
-  if (!status) return <StatusPending>Unknown</StatusPending>;
-  
+// Placeholder for actual VipData structure from your models.py
+interface VipDetailsData {
+  id: string;
+  vip_fqdn: string;
+  vip_ip: string;
+  port: number;
+  protocol: string;
+  environment: string;
+  datacenter: string;
+  app_id: string;
+  owner: string;
+  status: string;
+  created_at?: string; // Assuming these might be in your VipDB model
+  updated_at?: string;
+  pool_members?: Array<{ ip: string; port: number; enabled: boolean; status?: string }>;
+  monitor?: { type: string; port?: number; send_string?: string; receive_string?: string; interval?: number; timeout?: number };
+  persistence?: { type: string; timeout?: number };
+  // Add all other fields from VipDB model
+}
+
+// Mocked API call to fetch a single VIP's details
+const mockFetchVipDetails = async (vipId: string, authToken: string): Promise<VipDetailsData | null> => {
+  console.log(`Fetching details for VIP: ${vipId} with token: ${authToken ? 'Token Present' : 'No Token'}`);
+  await new Promise(resolve => setTimeout(resolve, 700));
+  // Find the VIP from a mock dataset or return a detailed mock object
+  const mockVips: VipDetailsData[] = [
+    {
+      id: '65f1c3b3e4b0f8a7b0a3b3e1',
+      vip_fqdn: 'app1.prod.ladc.davelab.net',
+      vip_ip: '10.1.1.101',
+      port: 443,
+      protocol: 'HTTPS',
+      environment: 'Prod',
+      datacenter: 'LADC',
+      app_id: 'APP001',
+      owner: 'user1',
+      status: 'Active',
+      created_at: '2023-03-15T10:00:00Z',
+      updated_at: '2023-03-16T11:30:00Z',
+      pool_members: [{ ip: '192.168.10.1', port: 8443, enabled: true, status: 'Up' }, { ip: '192.168.10.2', port: 8443, enabled: true, status: 'Up' }],
+      monitor: { type: 'HTTPS', port: 8443, send_string: 'GET /health', receive_string: '200 OK', interval: 10, timeout: 3 },
+      persistence: { type: 'SOURCE_IP', timeout: 1800 },
+    },
+    // Add other mock VIPs if needed for testing different IDs
+  ];
+  const foundVip = mockVips.find(vip => vip.id === vipId);
+  return foundVip || null;
+};
+
+const getStatusComponent = (status: string) => {
   switch (status.toLowerCase()) {
     case 'active':
-      return <StatusOK>Active</StatusOK>;
-    case 'pending':
-      return <StatusPending>Pending</StatusPending>;
+      return <StatusOK>{status}</StatusOK>;
     case 'building':
-      return <StatusRunning>Building</StatusRunning>;
-    case 'inactive':
-      return <StatusAborted>Inactive</StatusAborted>;
+      return <StatusRunning>{status}</StatusRunning>;
+    case 'pending':
+      return <StatusPending>{status}</StatusPending>;
     case 'error':
-      return <StatusError>Error</StatusError>;
+      return <StatusError>{status}</StatusError>;
+    case 'inactive':
+      return <StatusAborted>{status}</StatusAborted>;
     default:
-      return <StatusPending>Unknown</StatusPending>;
+      return <Typography variant="body2">{status}</Typography>;
   }
 };
 
 export const VipViewPage = () => {
+  const { vipId } = useParams<{ vipId: string }>();
   const alertApi = useApi(alertApiRef);
-  const lbaasApi = useApi(lbaasFrontendApiRef);
+  const identityApi = useApi(identityApiRef);
   const navigate = useNavigate();
-  const { fqdn } = useParams<{ fqdn: string }>();
-  
-  const [vipDetails, setVipDetails] = useState<Vip | null>(null);
+  const [vipDetails, setVipDetails] = useState<VipDetailsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    const loadVipDetails = async () => {
+    const fetchData = async () => {
+      if (!vipId) {
+        setError(new Error('VIP ID not found in URL.'));
+        setLoading(false);
+        return;
+      }
       try {
         setLoading(true);
-        setError(null);
-        
-        console.log(`Loading VIP details for FQDN: ${fqdn}`);
-        
-        if (!fqdn) {
-          // If no FQDN in URL, try to get VIP from sessionStorage
-          const storedVip = sessionStorage.getItem('currentVip');
-          
-          if (!storedVip) {
-            throw new Error('VIP details not found. Please return to the VIP list and try again.');
-          }
-          
-          const vipData = JSON.parse(storedVip) as Vip;
-          console.log('Loaded VIP details from sessionStorage:', vipData);
-          
-          setVipDetails(vipData);
-          return;
-        }
-        
-        // Try to fetch VIP details from backend using FQDN
-        try {
-          // First, get all VIPs
-          const allVips = await lbaasApi.getVips();
-          console.log('Fetched all VIPs to find matching FQDN:', allVips);
-          
-          // Find the VIP with matching FQDN
-          const decodedFqdn = decodeURIComponent(fqdn);
-          const matchingVip = allVips.find(vip => vip.vip_fqdn === decodedFqdn);
-          
-          if (!matchingVip) {
-            throw new Error(`VIP with FQDN ${decodedFqdn} not found`);
-          }
-          
-          console.log('Found matching VIP:', matchingVip);
-          
-          // If VIP has an ID, fetch full details
-          if (matchingVip.id) {
-            console.log(`Fetching full VIP details for ID: ${matchingVip.id}`);
-            const vipData = await lbaasApi.getVip(matchingVip.id);
-            console.log('Fetched VIP details from backend:', vipData);
-            setVipDetails(vipData);
-          } else {
-            // If no ID, use the VIP from the list
-            console.log('Using VIP details from list (no ID available)');
-            setVipDetails(matchingVip);
-          }
-        } catch (e) {
-          console.error('Error fetching VIP from backend:', e);
-          
-          // Fallback to sessionStorage if backend fetch fails
-          const storedVip = sessionStorage.getItem('currentVip');
-          
-          if (!storedVip) {
-            throw new Error('Failed to fetch VIP details from backend and no backup found in sessionStorage.');
-          }
-          
-          console.log('Falling back to sessionStorage for VIP details');
-          const vipData = JSON.parse(storedVip) as Vip;
-          setVipDetails(vipData);
+        const token = await identityApi.getCredentials();
+        const data = await mockFetchVipDetails(vipId, token?.token || '');
+        if (data) {
+          setVipDetails(data);
+        } else {
+          setError(new Error(`VIP with ID ${vipId} not found.`));
+          alertApi.post({ message: `VIP with ID ${vipId} not found.`, severity: 'error' });
         }
       } catch (e: any) {
-        console.error('Error loading VIP details:', e);
         setError(e);
-        alertApi.post({ message: `Error: ${e.message}`, severity: 'error' });
+        alertApi.post({ message: `Error fetching VIP details: ${e.message}`, severity: 'error' });
       } finally {
         setLoading(false);
       }
     };
-    
-    loadVipDetails();
-  }, [alertApi, lbaasApi, fqdn]);
-
-  const handleBackToList = () => {
-    navigate('/lbaas-frontend');
-  };
-
-  const handleEditVip = () => {
-    if (!vipDetails) {
-      alertApi.post({ message: 'Cannot edit VIP: Missing details', severity: 'error' });
-      return;
-    }
-    
-    // Store the VIP data in sessionStorage as a backup
-    sessionStorage.setItem('currentVip', JSON.stringify(vipDetails));
-    
-    // Navigate using the FQDN as the identifier in the URL
-    navigate(`/lbaas-frontend/edit/${encodeURIComponent(vipDetails.vip_fqdn)}`);
-  };
+    fetchData();
+  }, [vipId, alertApi, identityApi]);
 
   if (loading) {
-    return (
-      <Page themeId="tool">
-        <Header title="Loading VIP Details" />
-        <Content>
-          <Grid container spacing={3} justifyContent="center">
-            <Grid item>
-              <CircularProgress />
-              <Typography style={{ marginTop: 16 }}>Loading VIP details...</Typography>
-            </Grid>
-          </Grid>
-        </Content>
-      </Page>
-    );
+    return <CircularProgress />;
   }
 
   if (error) {
@@ -161,7 +128,7 @@ export const VipViewPage = () => {
         <Header title="Error" />
         <Content>
           <Typography color="error">{error.message}</Typography>
-          <Button onClick={handleBackToList} variant="outlined" style={{ marginTop: '20px' }}>
+          <Button component={RouterLink} to="/lbaas-frontend" variant="outlined" style={{ marginTop: '20px' }}>
             Back to VIP List
           </Button>
         </Content>
@@ -175,7 +142,7 @@ export const VipViewPage = () => {
         <Header title="VIP Not Found" />
         <Content>
           <Typography>The requested VIP could not be found.</Typography>
-          <Button onClick={handleBackToList} variant="outlined" style={{ marginTop: '20px' }}>
+          <Button component={RouterLink} to="/lbaas-frontend" variant="outlined" style={{ marginTop: '20px' }}>
             Back to VIP List
           </Button>
         </Content>
@@ -188,11 +155,12 @@ export const VipViewPage = () => {
       <Header 
         title={`VIP Details: ${vipDetails.vip_fqdn}`}
         subtitle={`Application ID: ${vipDetails.app_id}`}>
-        <Button onClick={handleBackToList} variant="outlined" startIcon={<ArrowBack />}>
+        <Button component={RouterLink} to="/lbaas-frontend" variant="outlined" startIcon={<ArrowBack />}>
           Back to VIP List
         </Button>
         <Button 
-          onClick={handleEditVip}
+          component={RouterLink} 
+          to={`/lbaas-frontend/${vipDetails.id}/edit`} 
           variant="contained" 
           color="primary" 
           startIcon={<Edit />} 
@@ -247,19 +215,65 @@ export const VipViewPage = () => {
                 <Divider style={{ margin: '20px 0' }} />
                 <Typography variant="h6">Pool Members</Typography>
                 <List dense>
-                  {vipDetails.pool_members.map((member: PoolMember, index: number) => (
+                  {vipDetails.pool_members.map((member, index) => (
                     <ListItem key={index}>
                       <ListItemText 
-                        primary={`Server: ${member.server_name} (${member.server_ip}:${member.server_port})`}
-                        secondary={`Weight: ${member.weight}, Status: ${member.status || 'Unknown'}`}
+                        primary={`IP: ${member.ip}, Port: ${member.port}, Enabled: ${member.enabled}`}
+                        secondary={member.status ? `Status: ${member.status}` : ''}
                       />
                     </ListItem>
                   ))}
                 </List>
               </Grid>
             )}
+
+            {vipDetails.monitor && (
+              <Grid item xs={12}>
+                <Divider style={{ margin: '20px 0' }} />
+                <Typography variant="h6">Health Monitor</Typography>
+                <Typography variant="body2"><strong>Type:</strong> {vipDetails.monitor.type}</Typography>
+                {vipDetails.monitor.port && <Typography variant="body2"><strong>Port:</strong> {vipDetails.monitor.port}</Typography>}
+                {vipDetails.monitor.send_string && <Typography variant="body2"><strong>Send String:</strong> {vipDetails.monitor.send_string}</Typography>}
+                {vipDetails.monitor.receive_string && <Typography variant="body2"><strong>Receive String:</strong> {vipDetails.monitor.receive_string}</Typography>}
+                {vipDetails.monitor.interval && <Typography variant="body2"><strong>Interval:</strong> {vipDetails.monitor.interval}s</Typography>}
+                {vipDetails.monitor.timeout && <Typography variant="body2"><strong>Timeout:</strong> {vipDetails.monitor.timeout}s</Typography>}
+              </Grid>
+            )}
+            
+            {vipDetails.persistence && (
+              <Grid item xs={12}>
+                <Divider style={{ margin: '20px 0' }} />
+                <Typography variant="h6">Persistence</Typography>
+                <Typography variant="body2"><strong>Type:</strong> {vipDetails.persistence.type}</Typography>
+                {vipDetails.persistence.timeout && <Typography variant="body2"><strong>Timeout:</strong> {vipDetails.persistence.timeout}s</Typography>}
+              </Grid>
+            )}
           </Grid>
         </Paper>
+        
+        {/* New section for additional navigation buttons */}
+        <Grid container spacing={2} style={{ marginTop: '20px' }}>
+          <Grid item>
+            <Button
+              component={RouterLink}
+              to={`/lbaas-frontend/vips/${vipId}/output`}
+              variant="outlined"
+              color="primary"
+            >
+              View Configuration Output
+            </Button>
+          </Grid>
+          <Grid item>
+            <Button
+              component={RouterLink}
+              to={`/lbaas-frontend/vips/${vipId}/promote`}
+              variant="outlined"
+              color="primary"
+            >
+              Promote to New Environment
+            </Button>
+          </Grid>
+        </Grid>
       </Content>
     </Page>
   );
