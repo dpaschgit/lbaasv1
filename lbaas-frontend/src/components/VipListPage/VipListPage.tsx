@@ -17,12 +17,26 @@ import {
   TableRow,
   Paper,
   IconButton,
-  Tooltip
+  Tooltip,
+  DialogContentText
 } from '@material-ui/core';
+import { Link as RouterLink } from 'react-router-dom';
 import { AddCircleOutline, Edit, Delete, Visibility } from '@material-ui/icons';
-import { InfoCard, Header, Page, Content, ContentHeader, SupportButton, StatusOK, StatusError, StatusPending, StatusAborted, StatusRunning } from '@backstage/core-components';
+import {
+  InfoCard,
+  Header,
+  Page,
+  Content,
+  ContentHeader,
+  SupportButton,
+  StatusOK,
+  StatusError,
+  StatusPending,
+  StatusAborted,
+  StatusRunning
+} from '@backstage/core-components';
 import { useApi, alertApiRef } from '@backstage/core-plugin-api';
-import { lbaasFrontendApiRef } from '../../api';
+import { lbaasFrontendApiRef, Vip } from '../../api';
 
 // Token storage key - must match the one in api.ts
 const TOKEN_STORAGE_KEY = 'lbaas_auth_token';
@@ -31,18 +45,18 @@ export const VipListPage = () => {
   const alertApi = useApi(alertApiRef);
   const lbaasApi = useApi(lbaasFrontendApiRef);
   
-  const [vips, setVips] = useState([]);
+  const [vips, setVips] = useState<Vip[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<Error | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
-  const [loginError, setLoginError] = useState(null);
+  const [loginError, setLoginError] = useState<string | null>(null);
   
   // Delete confirmation dialog
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [deleteVipId, setDeleteVipId] = useState(null);
+  const [deleteVipId, setDeleteVipId] = useState<string | null>(null);
   const [deleteVipName, setDeleteVipName] = useState('');
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [servicenowIncidentId, setServicenowIncidentId] = useState('');
@@ -71,7 +85,7 @@ export const VipListPage = () => {
       console.log('Fetched VIPs:', data);
       
       setVips(data);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Error fetching VIPs:', e);
       setError(e);
       
@@ -87,7 +101,7 @@ export const VipListPage = () => {
     }
   };
 
-  const handleLogin = async (e) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!username || !password) {
@@ -109,7 +123,7 @@ export const VipListPage = () => {
       // Clear login form
       setUsername('');
       setPassword('');
-    } catch (e) {
+    } catch (e: any) {
       console.error('Login error:', e);
       setLoginError(e.message);
       alertApi.post({ message: `Login failed: ${e.message}`, severity: 'error' });
@@ -124,7 +138,7 @@ export const VipListPage = () => {
     setVips([]);
   };
 
-  const openDeleteDialog = (vipId, vipName) => {
+  const openDeleteDialog = (vipId: string, vipName: string) => {
     setDeleteVipId(vipId);
     setDeleteVipName(vipName);
     setServicenowIncidentId('');
@@ -140,7 +154,7 @@ export const VipListPage = () => {
     setServicenowIncidentIdError('');
   };
 
-  const validateServicenowIncidentId = (id) => {
+  const validateServicenowIncidentId = (id: string) => {
     if (!id) {
       setServicenowIncidentIdError('Incident ID is required for deletion.');
       return false;
@@ -159,6 +173,8 @@ export const VipListPage = () => {
   };
 
   const handleDeleteVip = async () => {
+    if (!deleteVipId) return;
+    
     if (!validateServicenowIncidentId(servicenowIncidentId)) {
       return;
     }
@@ -172,7 +188,7 @@ export const VipListPage = () => {
       alertApi.post({ message: 'VIP deleted successfully', severity: 'success' });
       closeDeleteDialog();
       fetchVips();
-    } catch (e) {
+    } catch (e: any) {
       console.error('Error deleting VIP:', e);
       alertApi.post({ message: `Error: ${e.message}`, severity: 'error' });
       
@@ -187,8 +203,10 @@ export const VipListPage = () => {
     }
   };
 
-  const getStatusComponent = (status) => {
-    switch (status?.toLowerCase()) {
+  const getStatusComponent = (status?: string) => {
+    if (!status) return <StatusPending>Unknown</StatusPending>;
+    
+    switch (status.toLowerCase()) {
       case 'active':
         return <StatusOK>Active</StatusOK>;
       case 'pending':
@@ -201,33 +219,6 @@ export const VipListPage = () => {
         return <StatusError>Error</StatusError>;
       default:
         return <StatusPending>Unknown</StatusPending>;
-    }
-  };
-
-  // Helper function to navigate to VIP view page
-  const navigateToViewVip = (vipId) => {
-    try {
-      window.location.href = `/lbaas-frontend/${vipId}/view`;
-    } catch (error) {
-      console.error('Navigation error:', error);
-    }
-  };
-
-  // Helper function to navigate to VIP edit page
-  const navigateToEditVip = (vipId) => {
-    try {
-      window.location.href = `/lbaas-frontend/${vipId}/edit`;
-    } catch (error) {
-      console.error('Navigation error:', error);
-    }
-  };
-
-  // Helper function to navigate to VIP create page
-  const navigateToCreateVip = () => {
-    try {
-      window.location.href = '/lbaas-frontend/create';
-    } catch (error) {
-      console.error('Navigation error:', error);
     }
   };
 
@@ -296,7 +287,8 @@ export const VipListPage = () => {
             variant="contained"
             color="primary"
             startIcon={<AddCircleOutline />}
-            onClick={navigateToCreateVip}
+            component={RouterLink}
+            to="/lbaas-frontend/create"
           >
             Create New VIP
           </Button>
@@ -345,7 +337,8 @@ export const VipListPage = () => {
                   variant="contained"
                   color="primary"
                   startIcon={<AddCircleOutline />}
-                  onClick={navigateToCreateVip}
+                  component={RouterLink}
+                  to="/lbaas-frontend/create"
                   style={{ marginTop: 16 }}
                 >
                   Create New VIP
@@ -376,12 +369,12 @@ export const VipListPage = () => {
                         <TableCell>{getStatusComponent(vip.status)}</TableCell>
                         <TableCell>
                           <Tooltip title="View Details">
-                            <IconButton onClick={() => navigateToViewVip(vip.id)}>
+                            <IconButton component={RouterLink} to={`/lbaas-frontend/${vip.id}/view`}>
                               <Visibility />
                             </IconButton>
                           </Tooltip>
                           <Tooltip title="Edit">
-                            <IconButton onClick={() => navigateToEditVip(vip.id)}>
+                            <IconButton component={RouterLink} to={`/lbaas-frontend/${vip.id}/edit`}>
                               <Edit />
                             </IconButton>
                           </Tooltip>
@@ -404,12 +397,10 @@ export const VipListPage = () => {
         <Dialog open={deleteDialogOpen} onClose={closeDeleteDialog}>
           <DialogTitle>Confirm Deletion</DialogTitle>
           <DialogContent>
-            <Typography paragraph>
+            <DialogContentText>
               Are you sure you want to delete the VIP <strong>{deleteVipName}</strong>?
-            </Typography>
-            <Typography paragraph>
               This action cannot be undone. Please provide a ServiceNow incident ID for this change.
-            </Typography>
+            </DialogContentText>
             <TextField
               fullWidth
               label="ServiceNow Incident ID"

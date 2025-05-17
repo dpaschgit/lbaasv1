@@ -1,112 +1,94 @@
 import React, { useEffect, useState } from 'react';
-import { Typography, Grid, Button, CircularProgress, TextField, Paper } from '@material-ui/core';
-import { ArrowBack } from '@material-ui/icons';
+import { Typography, Grid, Button, CircularProgress, Paper, Divider, List, ListItem, ListItemText } from '@material-ui/core';
+import { Link as RouterLink, useParams } from 'react-router-dom';
+import { ArrowBack, Edit } from '@material-ui/icons';
 import {
-  InfoCard,
   Header,
   Page,
   Content,
   ContentHeader,
   SupportButton,
+  StatusOK,
+  StatusError,
+  StatusPending,
+  StatusAborted,
+  StatusRunning
 } from '@backstage/core-components';
 import { useApi, alertApiRef } from '@backstage/core-plugin-api';
-import { lbaasFrontendApiRef, Vip } from '../../api';
+import { lbaasFrontendApiRef, Vip, PoolMember } from '../../api';
 
-// Token storage key - must match the one in api.ts
-const TOKEN_STORAGE_KEY = 'lbaas_auth_token';
+const getStatusComponent = (status?: string) => {
+  if (!status) return <StatusPending>Unknown</StatusPending>;
+  
+  switch (status.toLowerCase()) {
+    case 'active':
+      return <StatusOK>Active</StatusOK>;
+    case 'pending':
+      return <StatusPending>Pending</StatusPending>;
+    case 'building':
+      return <StatusRunning>Building</StatusRunning>;
+    case 'inactive':
+      return <StatusAborted>Inactive</StatusAborted>;
+    case 'error':
+      return <StatusError>Error</StatusError>;
+    default:
+      return <StatusPending>Unknown</StatusPending>;
+  }
+};
 
 export const VipViewPage = () => {
+  const { vipId } = useParams<{ vipId: string }>();
   const alertApi = useApi(alertApiRef);
   const lbaasApi = useApi(lbaasFrontendApiRef);
   
-  const [vip, setVip] = useState<Vip | null>(null);
+  const [vipDetails, setVipDetails] = useState<Vip | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-  const [loginOpen, setLoginOpen] = useState(false);
 
   useEffect(() => {
-    const fetchVipDetails = async () => {
+    const fetchData = async () => {
+      if (!vipId) {
+        setError(new Error('VIP ID not found in URL.'));
+        setLoading(false);
+        return;
+      }
       try {
         setLoading(true);
+        setError(null);
         
-        // Get VIP ID from URL
-        const pathParts = window.location.pathname.split('/');
-        const vipId = pathParts[pathParts.length - 2]; // Format: /lbaas-frontend/:vipId/view
+        console.log(`Fetching details for VIP: ${vipId}`);
+        const data = await lbaasApi.getVip(vipId);
+        console.log('Fetched VIP details:', data);
         
-        if (!vipId) {
-          throw new Error('VIP ID not found in URL');
-        }
-        
-        console.log(`Fetching details for VIP ID: ${vipId}`);
-        
-        // Get token from localStorage
-        const token = localStorage.getItem(TOKEN_STORAGE_KEY);
-        if (!token) {
-          setLoginOpen(true);
-          throw new Error('Authentication required. Please login.');
-        }
-        
-        // Fetch VIP details
-        const vipData = await lbaasApi.getVip(vipId, token);
-        setVip(vipData);
+        setVipDetails(data);
       } catch (e: any) {
         console.error('Error fetching VIP details:', e);
         setError(e);
-        alertApi.post({ message: `Error: ${e.message}`, severity: 'error' });
         
-        // If authentication error, redirect to main page for login
+        // If authentication error, redirect to list page
         if (e.message.includes('Authentication') || e.message.includes('login')) {
-          navigateToMainPage();
+          alertApi.post({ message: 'Authentication required. Please login again.', severity: 'error' });
+          window.location.href = '/lbaas-frontend';
+        } else {
+          alertApi.post({ message: `Error: ${e.message}`, severity: 'error' });
         }
       } finally {
         setLoading(false);
       }
     };
     
-    fetchVipDetails();
-  }, []);
-
-  const navigateToMainPage = () => {
-    try {
-      window.location.href = '/lbaas-frontend';
-    } catch (error) {
-      console.error('Navigation error:', error);
-    }
-  };
-
-  if (loginOpen) {
-    return (
-      <Page themeId="tool">
-        <Header title="VIP Details" subtitle="View Load Balancer VIP Information" />
-        <Content>
-          <Grid container spacing={3} justifyContent="center">
-            <Grid item xs={12} sm={8} md={6} lg={4}>
-              <InfoCard title="Authentication Required">
-                <Typography>You need to login to view VIP details.</Typography>
-                <Button 
-                  variant="contained" 
-                  color="primary" 
-                  onClick={navigateToMainPage}
-                  style={{ marginTop: 16 }}
-                >
-                  Go to Login
-                </Button>
-              </InfoCard>
-            </Grid>
-          </Grid>
-        </Content>
-      </Page>
-    );
-  }
+    fetchData();
+  }, [vipId, alertApi, lbaasApi]);
 
   if (loading) {
     return (
       <Page themeId="tool">
-        <Header title="VIP Details" subtitle="View Load Balancer VIP Information" />
+        <Header title="Loading VIP Details" />
         <Content>
-          <Grid container spacing={3} justifyContent="center" alignItems="center" style={{ height: '50vh' }}>
+          <Grid container spacing={3} justifyContent="center">
             <Grid item>
               <CircularProgress />
+              <Typography style={{ marginTop: 16 }}>Loading VIP details...</Typography>
             </Grid>
           </Grid>
         </Content>
@@ -117,48 +99,26 @@ export const VipViewPage = () => {
   if (error) {
     return (
       <Page themeId="tool">
-        <Header title="VIP Details" subtitle="View Load Balancer VIP Information" />
+        <Header title="Error" />
         <Content>
-          <Grid container spacing={3} justifyContent="center">
-            <Grid item xs={12}>
-              <InfoCard title="Error">
-                <Typography color="error">Error loading VIP details: {error.message}</Typography>
-                <Button 
-                  variant="contained" 
-                  color="primary" 
-                  onClick={navigateToMainPage}
-                  style={{ marginTop: 16 }}
-                >
-                  Back to VIP List
-                </Button>
-              </InfoCard>
-            </Grid>
-          </Grid>
+          <Typography color="error">{error.message}</Typography>
+          <Button component={RouterLink} to="/lbaas-frontend" variant="outlined" style={{ marginTop: '20px' }}>
+            Back to VIP List
+          </Button>
         </Content>
       </Page>
     );
   }
 
-  if (!vip) {
+  if (!vipDetails) {
     return (
       <Page themeId="tool">
-        <Header title="VIP Details" subtitle="View Load Balancer VIP Information" />
+        <Header title="VIP Not Found" />
         <Content>
-          <Grid container spacing={3} justifyContent="center">
-            <Grid item xs={12}>
-              <InfoCard title="Not Found">
-                <Typography>VIP not found or has been deleted.</Typography>
-                <Button 
-                  variant="contained" 
-                  color="primary" 
-                  onClick={navigateToMainPage}
-                  style={{ marginTop: 16 }}
-                >
-                  Back to VIP List
-                </Button>
-              </InfoCard>
-            </Grid>
-          </Grid>
+          <Typography>The requested VIP could not be found.</Typography>
+          <Button component={RouterLink} to="/lbaas-frontend" variant="outlined" style={{ marginTop: '20px' }}>
+            Back to VIP List
+          </Button>
         </Content>
       </Page>
     );
@@ -166,218 +126,82 @@ export const VipViewPage = () => {
 
   return (
     <Page themeId="tool">
-      <Header title="VIP Details" subtitle="View Load Balancer VIP Information" />
+      <Header 
+        title={`VIP Details: ${vipDetails.vip_fqdn}`}
+        subtitle={`Application ID: ${vipDetails.app_id}`}>
+        <Button component={RouterLink} to="/lbaas-frontend" variant="outlined" startIcon={<ArrowBack />}>
+          Back to VIP List
+        </Button>
+        <Button 
+          component={RouterLink} 
+          to={`/lbaas-frontend/${vipDetails.id}/edit`} 
+          variant="contained" 
+          color="primary" 
+          startIcon={<Edit />} 
+          style={{ marginLeft: '10px' }}
+        >
+          Modify VIP
+        </Button>
+      </Header>
       <Content>
-        <ContentHeader title={vip.vip_fqdn || 'VIP Details'}>
-          <Button
-            variant="contained"
-            color="primary"
-            onClick={navigateToMainPage}
-            startIcon={<ArrowBack />}
-          >
-            Back to VIP List
-          </Button>
-          <SupportButton>View detailed information about this VIP.</SupportButton>
+        <ContentHeader title="VIP Configuration">
+          <SupportButton>Detailed information for the selected VIP.</SupportButton>
         </ContentHeader>
-        <Grid container spacing={3}>
-          <Grid item xs={12}>
-            <InfoCard title="Basic Information">
-              <Grid container spacing={3}>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    fullWidth
-                    label="FQDN"
-                    value={vip.vip_fqdn || ''}
-                    InputProps={{ readOnly: true }}
-                    margin="normal"
-                    variant="outlined"
-                  />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    fullWidth
-                    label="IP Address"
-                    value={vip.vip_ip || ''}
-                    InputProps={{ readOnly: true }}
-                    margin="normal"
-                    variant="outlined"
-                  />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    fullWidth
-                    label="Port"
-                    value={vip.port || ''}
-                    InputProps={{ readOnly: true }}
-                    margin="normal"
-                    variant="outlined"
-                  />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    fullWidth
-                    label="Protocol"
-                    value={vip.protocol || ''}
-                    InputProps={{ readOnly: true }}
-                    margin="normal"
-                    variant="outlined"
-                  />
-                </Grid>
-              </Grid>
-            </InfoCard>
-          </Grid>
-          
-          <Grid item xs={12}>
-            <InfoCard title="Environment Information">
-              <Grid container spacing={3}>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    fullWidth
-                    label="Environment"
-                    value={vip.environment || ''}
-                    InputProps={{ readOnly: true }}
-                    margin="normal"
-                    variant="outlined"
-                  />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    fullWidth
-                    label="Datacenter"
-                    value={vip.datacenter || ''}
-                    InputProps={{ readOnly: true }}
-                    margin="normal"
-                    variant="outlined"
-                  />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    fullWidth
-                    label="App ID"
-                    value={vip.app_id || ''}
-                    InputProps={{ readOnly: true }}
-                    margin="normal"
-                    variant="outlined"
-                  />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    fullWidth
-                    label="Owner"
-                    value={vip.owner || ''}
-                    InputProps={{ readOnly: true }}
-                    margin="normal"
-                    variant="outlined"
-                  />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    fullWidth
-                    label="Status"
-                    value={vip.status || ''}
-                    InputProps={{ readOnly: true }}
-                    margin="normal"
-                    variant="outlined"
-                  />
-                </Grid>
-              </Grid>
-            </InfoCard>
-          </Grid>
-          
-          {vip.pool_members && vip.pool_members.length > 0 && (
-            <Grid item xs={12}>
-              <InfoCard title="Pool Members">
-                <Grid container spacing={3}>
-                  {vip.pool_members.map((member, index) => (
-                    <Grid item xs={12} key={member.id || index}>
-                      <Paper elevation={1} style={{ padding: 16 }}>
-                        <Grid container spacing={2}>
-                          <Grid item xs={12} md={3}>
-                            <TextField
-                              fullWidth
-                              label="Server Name"
-                              value={member.server_name || ''}
-                              InputProps={{ readOnly: true }}
-                              margin="normal"
-                              variant="outlined"
-                            />
-                          </Grid>
-                          <Grid item xs={12} md={3}>
-                            <TextField
-                              fullWidth
-                              label="Server IP"
-                              value={member.server_ip || ''}
-                              InputProps={{ readOnly: true }}
-                              margin="normal"
-                              variant="outlined"
-                            />
-                          </Grid>
-                          <Grid item xs={12} md={2}>
-                            <TextField
-                              fullWidth
-                              label="Server Port"
-                              value={member.server_port || ''}
-                              InputProps={{ readOnly: true }}
-                              margin="normal"
-                              variant="outlined"
-                            />
-                          </Grid>
-                          <Grid item xs={12} md={2}>
-                            <TextField
-                              fullWidth
-                              label="Weight"
-                              value={member.weight || ''}
-                              InputProps={{ readOnly: true }}
-                              margin="normal"
-                              variant="outlined"
-                            />
-                          </Grid>
-                          <Grid item xs={12} md={2}>
-                            <TextField
-                              fullWidth
-                              label="Status"
-                              value={member.status || ''}
-                              InputProps={{ readOnly: true }}
-                              margin="normal"
-                              variant="outlined"
-                            />
-                          </Grid>
-                        </Grid>
-                      </Paper>
-                    </Grid>
-                  ))}
-                </Grid>
-              </InfoCard>
+        <Paper style={{ padding: '20px' }}>
+          <Grid container spacing={3}>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="subtitle1"><strong>FQDN:</strong> {vipDetails.vip_fqdn}</Typography>
             </Grid>
-          )}
-          
-          <Grid item xs={12}>
-            <InfoCard title="Timestamps">
-              <Grid container spacing={3}>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    fullWidth
-                    label="Created At"
-                    value={vip.created_at || ''}
-                    InputProps={{ readOnly: true }}
-                    margin="normal"
-                    variant="outlined"
-                  />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    fullWidth
-                    label="Updated At"
-                    value={vip.updated_at || ''}
-                    InputProps={{ readOnly: true }}
-                    margin="normal"
-                    variant="outlined"
-                  />
-                </Grid>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="subtitle1"><strong>IP Address:</strong> {vipDetails.vip_ip}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={3}>
+              <Typography variant="subtitle1"><strong>Port:</strong> {vipDetails.port}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={3}>
+              <Typography variant="subtitle1"><strong>Protocol:</strong> {vipDetails.protocol}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={3}>
+              <Typography variant="subtitle1"><strong>Environment:</strong> {vipDetails.environment}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={3}>
+              <Typography variant="subtitle1"><strong>Datacenter:</strong> {vipDetails.datacenter}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="subtitle1"><strong>Owner:</strong> {vipDetails.owner}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="subtitle1"><strong>Status:</strong> {getStatusComponent(vipDetails.status)}</Typography>
+            </Grid>
+            {vipDetails.created_at && (
+              <Grid item xs={12} sm={6}>
+                <Typography variant="subtitle1"><strong>Created At:</strong> {new Date(vipDetails.created_at).toLocaleString()}</Typography>
               </Grid>
-            </InfoCard>
+            )}
+            {vipDetails.updated_at && (
+              <Grid item xs={12} sm={6}>
+                <Typography variant="subtitle1"><strong>Last Updated:</strong> {new Date(vipDetails.updated_at).toLocaleString()}</Typography>
+              </Grid>
+            )}
+
+            {vipDetails.pool_members && vipDetails.pool_members.length > 0 && (
+              <Grid item xs={12}>
+                <Divider style={{ margin: '20px 0' }} />
+                <Typography variant="h6">Pool Members</Typography>
+                <List dense>
+                  {vipDetails.pool_members.map((member: PoolMember, index: number) => (
+                    <ListItem key={index}>
+                      <ListItemText 
+                        primary={`Server: ${member.server_name} (${member.server_ip}:${member.server_port})`}
+                        secondary={`Weight: ${member.weight}, Status: ${member.status || 'Unknown'}`}
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              </Grid>
+            )}
           </Grid>
-        </Grid>
+        </Paper>
       </Content>
     </Page>
   );

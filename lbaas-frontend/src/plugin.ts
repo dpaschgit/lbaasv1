@@ -1,65 +1,58 @@
-import { createPlugin, createRoutableExtension } from "@backstage/core-plugin-api";
-import { createApiFactory, discoveryApiRef, fetchApiRef } from "@backstage/core-plugin-api";
+import { createPlugin, createRoutableExtension, createApiFactory } from '@backstage/core-plugin-api';
 
-import { rootRouteRef, vipCreateRouteRef, vipViewRouteRef, vipEditRouteRef } from "./routes";
-import { LbaasFrontendApiClient, lbaasFrontendApiRef } from "./api";
+import { rootRouteRef } from './routes';
+import { lbaasFrontendApiRef, LbaasFrontendApiClient } from './api';
 
-export const lbaasPlugin = createPlugin({
-  id: "lbaas-frontend",
-  title: "VIPs", // Added title for the sidebar
+export const lbaasFrontendPlugin = createPlugin({
+  id: 'lbaas-frontend',
   apis: [
     createApiFactory({
       api: lbaasFrontendApiRef,
-      deps: { discoveryApi: discoveryApiRef, fetchApi: fetchApiRef },
-      factory: ({ discoveryApi, fetchApi }) =>
-        new LbaasFrontendApiClient({ discoveryApi, fetchApi }),
+      deps: {},
+      factory: () => new LbaasFrontendApiClient(),
     }),
   ],
   routes: {
     root: rootRouteRef,
-    createVip: vipCreateRouteRef,
-    viewVip: vipViewRouteRef,
-    editVip: vipEditRouteRef,
   },
 });
 
-// Main page for listing VIPs
-export const LbaasPage = lbaasPlugin.provide(
+export const LbaasFrontendPage = lbaasFrontendPlugin.provide(
   createRoutableExtension({
-    name: "LbaasPage",
+    name: 'LbaasFrontendPage',
     component: () =>
-      import("./components/VipListPage").then(m => m.VipListPage),
+      import('./components/VipListPage').then(m => m.VipListPage),
     mountPoint: rootRouteRef,
   }),
 );
 
-// Page for creating a new VIP
-export const VipCreatePageExtension = lbaasPlugin.provide(
+export const LbaasFrontendViewPage = lbaasFrontendPlugin.provide(
   createRoutableExtension({
-    name: "VipCreatePageExtension",
+    name: 'LbaasFrontendViewPage',
     component: () =>
-      import("./components/VipCreatePage").then(m => m.VipCreatePage),
-    mountPoint: vipCreateRouteRef,
+      import('./components/VipViewPage').then(m => m.VipViewPage),
+    mountPoint: rootRouteRef,
   }),
 );
 
-// Page for viewing VIP details
-export const VipViewPageExtension = lbaasPlugin.provide(
+export const LbaasFrontendEditPage = lbaasFrontendPlugin.provide(
   createRoutableExtension({
-    name: "VipViewPageExtension",
+    name: 'LbaasFrontendEditPage',
     component: () =>
-      import("./components/VipViewPage").then(m => m.VipViewPage),
-    mountPoint: vipViewRouteRef,
+      import('./components/VipEditPage').then(m => m.VipEditPage),
+    mountPoint: rootRouteRef,
   }),
 );
 
-// Page for editing an existing VIP
-export const VipEditPageExtension = lbaasPlugin.provide(
+export const LbaasFrontendCreatePage = lbaasFrontendPlugin.provide(
   createRoutableExtension({
-    name: "VipEditPageExtension",
+    name: 'LbaasFrontendCreatePage',
     component: () =>
-      import("./components/VipEditPage").then(m => m.VipEditPage),
-    mountPoint: vipEditRouteRef,
+      import('./components/VipCreatePage').then(m => m.VipCreatePage),
+    mountPoint: rootRouteRef,
   }),
 );
 
+// Compatibility exports for legacy code
+export const lbaasPlugin = lbaasFrontendPlugin;
+export const LbaasPage = LbaasFrontendPage;
