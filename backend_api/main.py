@@ -15,6 +15,9 @@ from integrations import (
     call_translator_module
 )
 from db import get_database, get_vips_collection
+from mongodb_config_storage import LBaaSConfigStorage, EnvironmentPromotion, LBMigration
+from promotion_api import router as promotion_router
+from migration_api import router as migration_router
 
 # --- App Initialization ---
 app = FastAPI(
