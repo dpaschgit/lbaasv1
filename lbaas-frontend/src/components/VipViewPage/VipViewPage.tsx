@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Typography, Grid, Button, CircularProgress, Paper, Divider, List, ListItem, ListItemText } from '@material-ui/core';
-import { Link as RouterLink, useParams, useNavigate } from 'react-router-dom';
+import { Link as RouterLink, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { ArrowBack, Edit } from '@material-ui/icons';
 import {
   Header,
@@ -37,8 +37,8 @@ interface VipDetailsData {
 }
 
 // Mocked API call to fetch a single VIP's details
-const mockFetchVipDetails = async (vipId: string, authToken: string): Promise<VipDetailsData | null> => {
-  console.log(`Fetching details for VIP: ${vipId} with token: ${authToken ? 'Token Present' : 'No Token'}`);
+const mockFetchVipDetails = async (vipIdentifier: string, authToken: string): Promise<VipDetailsData | null> => {
+  console.log(`Fetching details for VIP: ${vipIdentifier} with token: ${authToken ? 'Token Present' : 'No Token'}`);
   await new Promise(resolve => setTimeout(resolve, 700));
   // Find the VIP from a mock dataset or return a detailed mock object
   const mockVips: VipDetailsData[] = [
@@ -61,7 +61,15 @@ const mockFetchVipDetails = async (vipId: string, authToken: string): Promise<Vi
     },
     // Add other mock VIPs if needed for testing different IDs
   ];
-  const foundVip = mockVips.find(vip => vip.id === vipId);
+  
+  // Try to find the VIP by ID first
+  let foundVip = mockVips.find(vip => vip.id === vipIdentifier);
+  
+  // If not found by ID, try to find by FQDN
+  if (!foundVip) {
+    foundVip = mockVips.find(vip => vip.vip_fqdn === vipIdentifier);
+  }
+  
   return foundVip || null;
 };
 
@@ -83,30 +91,60 @@ const getStatusComponent = (status: string) => {
 };
 
 export const VipViewPage = () => {
+  // Get both the vipId parameter and the full location
   const { vipId } = useParams<{ vipId: string }>();
+  const location = useLocation();
   const alertApi = useApi(alertApiRef);
   const identityApi = useApi(identityApiRef);
   const navigate = useNavigate();
   const [vipDetails, setVipDetails] = useState<VipDetailsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  
+  // Extract VIP identifier from URL path
+  const getVipIdentifierFromPath = () => {
+    // Check if vipId is available from useParams
+    if (vipId) {
+      return vipId;
+    }
+    
+    // Fallback: try to extract from path
+    const pathParts = location.pathname.split('/');
+    
+    // Check if the path contains 'view'
+    const viewIndex = pathParts.indexOf('view');
+    if (viewIndex !== -1 && viewIndex < pathParts.length - 1) {
+      return pathParts[viewIndex + 1]; // Return the part after 'view'
+    }
+    
+    // Check if there's any part after lbaas-frontend
+    const lbaasIndex = pathParts.indexOf('lbaas-frontend');
+    if (lbaasIndex !== -1 && lbaasIndex < pathParts.length - 1) {
+      return pathParts[lbaasIndex + 1]; // Return the part after 'lbaas-frontend'
+    }
+    
+    return null;
+  };
 
   useEffect(() => {
     const fetchData = async () => {
-      if (!vipId) {
+      const vipIdentifier = getVipIdentifierFromPath();
+      
+      if (!vipIdentifier) {
         setError(new Error('VIP ID not found in URL.'));
         setLoading(false);
         return;
       }
+      
       try {
         setLoading(true);
         const token = await identityApi.getCredentials();
-        const data = await mockFetchVipDetails(vipId, token?.token || '');
+        const data = await mockFetchVipDetails(vipIdentifier, token?.token || '');
         if (data) {
           setVipDetails(data);
         } else {
-          setError(new Error(`VIP with ID ${vipId} not found.`));
-          alertApi.post({ message: `VIP with ID ${vipId} not found.`, severity: 'error' });
+          setError(new Error(`VIP with identifier ${vipIdentifier} not found.`));
+          alertApi.post({ message: `VIP with identifier ${vipIdentifier} not found.`, severity: 'error' });
         }
       } catch (e: any) {
         setError(e);
@@ -116,7 +154,7 @@ export const VipViewPage = () => {
       }
     };
     fetchData();
-  }, [vipId, alertApi, identityApi]);
+  }, [location.pathname, alertApi, identityApi]);
 
   if (loading) {
     return <CircularProgress />;
@@ -150,6 +188,9 @@ export const VipViewPage = () => {
     );
   }
 
+  // Use the VIP ID for constructing navigation URLs
+  const vipIdentifier = vipDetails.id || getVipIdentifierFromPath();
+
   return (
     <Page themeId="tool">
       <Header 
@@ -160,7 +201,7 @@ export const VipViewPage = () => {
         </Button>
         <Button 
           component={RouterLink} 
-          to={`/lbaas-frontend/${vipDetails.id}/edit`} 
+          to={`/lbaas-frontend/${vipIdentifier}/edit`} 
           variant="contained" 
           color="primary" 
           startIcon={<Edit />} 
@@ -256,7 +297,7 @@ export const VipViewPage = () => {
           <Grid item>
             <Button
               component={RouterLink}
-              to={`/lbaas-frontend/vips/${vipId}/output`}
+              to={`/lbaas-frontend/vips/${vipIdentifier}/output`}
               variant="outlined"
               color="primary"
             >
@@ -266,7 +307,7 @@ export const VipViewPage = () => {
           <Grid item>
             <Button
               component={RouterLink}
-              to={`/lbaas-frontend/vips/${vipId}/promote`}
+              to={`/lbaas-frontend/vips/${vipIdentifier}/promote`}
               variant="outlined"
               color="primary"
             >
