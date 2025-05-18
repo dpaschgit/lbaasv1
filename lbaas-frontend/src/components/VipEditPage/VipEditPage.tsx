@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { Typography, Grid, Button, CircularProgress, Paper, Divider, TextField, MenuItem, FormControl, InputLabel, Select, FormHelperText, Dialog, DialogTitle, DialogContent, DialogActions } from '@material-ui/core';
-import { Link as RouterLink, useParams, useNavigate } from 'react-router-dom';
 import { ArrowBack, Save, LockOpen } from '@material-ui/icons';
 import {
   Header,
@@ -13,6 +12,8 @@ import {
 } from '@backstage/core-components';
 import { useApi, alertApiRef } from '@backstage/core-plugin-api';
 import { lbaasFrontendApiRef } from '../../api';
+import { Link as RouterLink, useParams, useNavigate, useLocation } from 'react-router-dom';
+
 
 // Interface for VIP data
 interface VipData {
@@ -43,8 +44,18 @@ interface FormErrors {
 }
 
 export const VipEditPage = () => {
-  // Extract vipId from URL parameters
-  const { vipId } = useParams<{ vipId: string }>();
+  // Extract vipId from URL parameters using robust approach
+  const params = useParams<{ vipId?: string }>();
+  const location = useLocation();
+  const pathSegments = location.pathname.split('/');
+  
+  // Extract vipId from either params or URL path
+  const vipId = params.vipId || 
+                (pathSegments.length > 2 ? pathSegments[pathSegments.length - 2] : undefined);
+  
+  console.log('Path segments:', pathSegments);
+  console.log('Extracted vipId:', vipId);
+  
   const alertApi = useApi(alertApiRef);
   const lbaasApi = useApi(lbaasFrontendApiRef);
   const navigate = useNavigate();
@@ -481,7 +492,6 @@ export const VipEditPage = () => {
                   required
                   error={!!formErrors.vip_fqdn}
                   helperText={formErrors.vip_fqdn}
-                  disabled={!lbaasApi.isAuthenticated()}
                 />
               </Grid>
               
@@ -495,7 +505,6 @@ export const VipEditPage = () => {
                   required
                   error={!!formErrors.vip_ip}
                   helperText={formErrors.vip_ip}
-                  disabled={!lbaasApi.isAuthenticated()}
                 />
               </Grid>
               
@@ -511,20 +520,22 @@ export const VipEditPage = () => {
                   inputProps={{ min: 1, max: 65535 }}
                   error={!!formErrors.port}
                   helperText={formErrors.port}
-                  disabled={!lbaasApi.isAuthenticated()}
                 />
               </Grid>
               
               <Grid item xs={12} sm={4}>
-                <FormControl fullWidth required error={!!formErrors.protocol} disabled={!lbaasApi.isAuthenticated()}>
-                  <InputLabel>Protocol</InputLabel>
+                <FormControl fullWidth required error={!!formErrors.protocol}>
+                  <InputLabel id="protocol-label">Protocol</InputLabel>
                   <Select
+                    labelId="protocol-label"
                     name="protocol"
                     value={formData.protocol}
                     onChange={handleChange}
                   >
-                    {protocols.map(protocol => (
-                      <MenuItem key={protocol} value={protocol}>{protocol}</MenuItem>
+                    {protocols.map((protocol) => (
+                      <MenuItem key={protocol} value={protocol}>
+                        {protocol}
+                      </MenuItem>
                     ))}
                   </Select>
                   {formErrors.protocol && <FormHelperText>{formErrors.protocol}</FormHelperText>}
@@ -541,20 +552,22 @@ export const VipEditPage = () => {
                   required
                   error={!!formErrors.app_id}
                   helperText={formErrors.app_id}
-                  disabled={!lbaasApi.isAuthenticated()}
                 />
               </Grid>
               
               <Grid item xs={12} sm={6}>
-                <FormControl fullWidth required error={!!formErrors.environment} disabled={!lbaasApi.isAuthenticated()}>
-                  <InputLabel>Environment</InputLabel>
+                <FormControl fullWidth required error={!!formErrors.environment}>
+                  <InputLabel id="environment-label">Environment</InputLabel>
                   <Select
+                    labelId="environment-label"
                     name="environment"
                     value={formData.environment}
                     onChange={handleChange}
                   >
-                    {environments.map(env => (
-                      <MenuItem key={env} value={env}>{env}</MenuItem>
+                    {environments.map((env) => (
+                      <MenuItem key={env} value={env}>
+                        {env}
+                      </MenuItem>
                     ))}
                   </Select>
                   {formErrors.environment && <FormHelperText>{formErrors.environment}</FormHelperText>}
@@ -562,46 +575,22 @@ export const VipEditPage = () => {
               </Grid>
               
               <Grid item xs={12} sm={6}>
-                <FormControl fullWidth required error={!!formErrors.datacenter} disabled={!formData.environment || !lbaasApi.isAuthenticated()}>
-                  <InputLabel>Datacenter</InputLabel>
+                <FormControl fullWidth required error={!!formErrors.datacenter} disabled={!formData.environment}>
+                  <InputLabel id="datacenter-label">Datacenter</InputLabel>
                   <Select
+                    labelId="datacenter-label"
                     name="datacenter"
                     value={formData.datacenter}
                     onChange={handleChange}
                   >
-                    {formData.environment && datacenters[formData.environment]?.map(dc => (
-                      <MenuItem key={dc} value={dc}>{dc}</MenuItem>
+                    {formData.environment && datacenters[formData.environment]?.map((dc) => (
+                      <MenuItem key={dc} value={dc}>
+                        {dc}
+                      </MenuItem>
                     ))}
                   </Select>
                   {formErrors.datacenter && <FormHelperText>{formErrors.datacenter}</FormHelperText>}
                 </FormControl>
-              </Grid>
-              
-              {/* Pool Members Section */}
-              <Grid item xs={12} style={{ marginTop: '20px' }}>
-                <Typography variant="h6">Pool Members</Typography>
-                <Divider style={{ marginTop: '8px', marginBottom: '16px' }} />
-                <Typography variant="body2" color="textSecondary">
-                  Pool members can be edited in a future version of this application.
-                </Typography>
-              </Grid>
-              
-              {/* Health Monitor Section */}
-              <Grid item xs={12} style={{ marginTop: '20px' }}>
-                <Typography variant="h6">Health Monitor</Typography>
-                <Divider style={{ marginTop: '8px', marginBottom: '16px' }} />
-                <Typography variant="body2" color="textSecondary">
-                  Health monitor settings can be edited in a future version of this application.
-                </Typography>
-              </Grid>
-              
-              {/* Persistence Section */}
-              <Grid item xs={12} style={{ marginTop: '20px' }}>
-                <Typography variant="h6">Persistence</Typography>
-                <Divider style={{ marginTop: '8px', marginBottom: '16px' }} />
-                <Typography variant="body2" color="textSecondary">
-                  Persistence settings can be edited in a future version of this application.
-                </Typography>
               </Grid>
               
               {/* Submit Button */}
@@ -613,7 +602,15 @@ export const VipEditPage = () => {
                   startIcon={<Save />}
                   disabled={saving || !lbaasApi.isAuthenticated()}
                 >
-                  {saving ? 'Saving...' : 'Save Changes'}
+                  {saving ? <CircularProgress size={24} /> : 'Save Changes'}
+                </Button>
+                <Button
+                  component={RouterLink}
+                  to={`/lbaas-frontend/${vipId}/view`}
+                  variant="outlined"
+                  style={{ marginLeft: '10px' }}
+                >
+                  Cancel
                 </Button>
               </Grid>
             </Grid>
