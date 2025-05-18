@@ -2,11 +2,12 @@ import { createPlugin, createRouteRef, createSubRouteRef, createRoutableExtensio
 import { createApiFactory } from '@backstage/core-plugin-api';
 import { lbaasFrontendApiRef, LbaasFrontendApiClient } from './api';
 
+// Root route reference for the plugin
 export const rootRouteRef = createRouteRef({
   id: 'lbaas-frontend',
 });
 
-// Updated to use consistent parameter name 'vipId' across all routes
+// Define all sub-routes with consistent parameter naming (vipId)
 export const vipViewRouteRef = createSubRouteRef({
   id: 'lbaas-frontend-vip-view',
   parent: rootRouteRef,
@@ -25,7 +26,6 @@ export const vipCreateRouteRef = createSubRouteRef({
   path: '/create',
 });
 
-// New route references for translator output and environment promotion
 export const vipOutputRouteRef = createSubRouteRef({
   id: 'lbaas-frontend-vip-output',
   parent: rootRouteRef,
@@ -38,6 +38,7 @@ export const vipPromoteRouteRef = createSubRouteRef({
   path: '/:vipId/promote',
 });
 
+// Create the plugin with API factory
 export const lbaasFrontendPlugin = createPlugin({
   id: 'lbaas-frontend',
   apis: [
@@ -57,6 +58,7 @@ export const lbaasFrontendPlugin = createPlugin({
   },
 });
 
+// Create routable extensions for all pages
 export const LbaasFrontendPage = lbaasFrontendPlugin.provide(
   createRoutableExtension({
     name: 'LbaasFrontendPage',
@@ -93,7 +95,6 @@ export const LbaasFrontendCreatePage = lbaasFrontendPlugin.provide(
   }),
 );
 
-// New routable extensions for translator output and environment promotion
 export const LbaasFrontendOutputPage = lbaasFrontendPlugin.provide(
   createRoutableExtension({
     name: 'LbaasFrontendOutputPage',

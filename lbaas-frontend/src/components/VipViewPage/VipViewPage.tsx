@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Typography, Grid, Button, CircularProgress, Paper, Divider, List, ListItem, ListItemText } from '@material-ui/core';
+import { Typography, Grid, Button, CircularProgress, Paper, Divider, List, ListItem, ListItemText, Dialog, DialogTitle, DialogContent, DialogActions, TextField } from '@material-ui/core';
 import { Link as RouterLink, useParams, useNavigate, useLocation } from 'react-router-dom';
-import { ArrowBack, Edit } from '@material-ui/icons';
+import { ArrowBack, Edit, LockOpen } from '@material-ui/icons';
 import {
   Header,
   Page,
@@ -12,9 +12,11 @@ import {
   StatusError,
   StatusPending,
   StatusAborted,
-  StatusRunning
+  StatusRunning,
+  InfoCard,
+  ErrorPanel
 } from '@backstage/core-components';
-import { useApi, alertApiRef, identityApiRef } from '@backstage/core-plugin-api';
+import { useApi, alertApiRef } from '@backstage/core-plugin-api';
 import { lbaasFrontendApiRef } from '../../api';
 
 // Interface for VIP details data
@@ -35,6 +37,38 @@ interface VipDetailsData {
   monitor?: { type: string; port?: number; send_string?: string; receive_string?: string; interval?: number; timeout?: number };
   persistence?: { type: string; timeout?: number };
 }
+
+// Mock data for when not authenticated or API fails
+const mockVipDetails: VipDetailsData = {
+  id: 'mock-vip-1',
+  vip_fqdn: 'app1.example.com',
+  vip_ip: '192.168.1.10',
+  port: 80,
+  protocol: 'HTTP',
+  environment: 'Development',
+  datacenter: 'DevDC1',
+  app_id: 'APP001',
+  owner: 'John Doe',
+  status: 'active',
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+  pool_members: [
+    { ip: '192.168.2.10', port: 8080, enabled: true, status: 'active' },
+    { ip: '192.168.2.11', port: 8080, enabled: true, status: 'active' }
+  ],
+  monitor: {
+    type: 'HTTP',
+    port: 8080,
+    send_string: 'GET /health HTTP/1.1\r\nHost: example.com\r\n\r\n',
+    receive_string: '200 OK',
+    interval: 5,
+    timeout: 16
+  },
+  persistence: {
+    type: 'cookie',
+    timeout: 3600
+  }
+};
 
 // Added null/undefined check to prevent crashes
 const getStatusComponent = (status: string | undefined) => {
@@ -64,86 +98,167 @@ export const VipViewPage = () => {
   const { vipId } = useParams<{ vipId: string }>();
   const location = useLocation();
   const alertApi = useApi(alertApiRef);
-  const identityApi = useApi(identityApiRef);
   const lbaasApi = useApi(lbaasFrontendApiRef);
   const navigate = useNavigate();
   const [vipDetails, setVipDetails] = useState<VipDetailsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [isLoginDialogOpen, setIsLoginDialogOpen] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [usingCachedData, setUsingCachedData] = useState(false);
+  const [usingMockData, setUsingMockData] = useState(false);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      if (!vipId) {
-        setError(new Error('VIP ID not found in URL.'));
+  // Handle login dialog
+  const handleLoginDialogOpen = () => {
+    setIsLoginDialogOpen(true);
+    setLoginError(null);
+  };
+
+  const handleLoginDialogClose = () => {
+    setIsLoginDialogOpen(false);
+    setLoginError(null);
+  };
+
+  const handleLogin = async () => {
+    try {
+      setLoginError(null);
+      await lbaasApi.login(username, password);
+      handleLoginDialogClose();
+      // Reload data after successful login
+      fetchVipDetails();
+    } catch (error: any) {
+      console.error('Login error:', error);
+      setLoginError(error.message || 'Login failed. Please try again.');
+    }
+  };
+
+  const fetchVipDetails = async () => {
+    if (!vipId) {
+      setError(new Error('VIP ID not found in URL.'));
+      setLoading(false);
+      return;
+    }
+    
+    try {
+      setLoading(true);
+      
+      // Check if we have cached data in sessionStorage
+      const cachedData = sessionStorage.getItem(`vip_${vipId}`);
+      if (cachedData) {
+        try {
+          const parsedData = JSON.parse(cachedData);
+          setVipDetails(parsedData);
+          setUsingCachedData(true);
+          setUsingMockData(false);
+          console.log('Using cached VIP data from sessionStorage');
+          // Continue fetching fresh data in the background
+        } catch (parseError) {
+          console.error('Error parsing cached VIP data:', parseError);
+          // Continue with API fetch if parsing fails
+        }
+      }
+      
+      // Check if authenticated
+      if (!lbaasApi.isAuthenticated()) {
+        console.log('Not authenticated, using mock or cached data');
+        if (!cachedData) {
+          // Use mock data if no cached data available
+          setVipDetails({
+            ...mockVipDetails,
+            id: vipId // Ensure the mock data uses the correct ID
+          });
+          setUsingMockData(true);
+          setUsingCachedData(false);
+        }
         setLoading(false);
         return;
       }
       
       try {
-        setLoading(true);
+        // Use the API client to fetch VIP details
+        const data = await lbaasApi.getVip(vipId);
         
-        // Check if we have cached data in sessionStorage
-        const cachedData = sessionStorage.getItem(`vip_${vipId}`);
-        if (cachedData) {
+        if (data) {
+          // Ensure VIP has a status property to prevent errors
+          const safeData = {
+            ...data,
+            status: data.status || 'Unknown'
+          };
+          setVipDetails(safeData);
+          setUsingCachedData(false);
+          setUsingMockData(false);
+          
+          // Cache the data in sessionStorage for future use
           try {
-            const parsedData = JSON.parse(cachedData);
-            setVipDetails(parsedData);
-            console.log('Using cached VIP data from sessionStorage');
-            // Continue fetching fresh data in the background
-          } catch (parseError) {
-            console.error('Error parsing cached VIP data:', parseError);
-            // Continue with API fetch if parsing fails
+            sessionStorage.setItem(`vip_${vipId}`, JSON.stringify(safeData));
+          } catch (storageError) {
+            console.error('Error caching VIP data:', storageError);
+            // Non-critical error, continue without caching
           }
-        }
-        
-        try {
-          // Use the API client to fetch VIP details
-          const data = await lbaasApi.getVip(vipId);
-          
-          if (data) {
-            // Ensure VIP has a status property to prevent errors
-            const safeData = {
-              ...data,
-              status: data.status || 'Unknown'
-            };
-            setVipDetails(safeData);
-            
-            // Cache the data in sessionStorage for future use
-            try {
-              sessionStorage.setItem(`vip_${vipId}`, JSON.stringify(safeData));
-            } catch (storageError) {
-              console.error('Error caching VIP data:', storageError);
-              // Non-critical error, continue without caching
-            }
-          } else {
-            // If no data returned but no error thrown, check if we already have cached data
-            if (!cachedData) {
-              setError(new Error(`VIP with ID ${vipId} not found.`));
-              alertApi.post({ message: `VIP with ID ${vipId} not found.`, severity: 'error' });
-            }
-          }
-        } catch (apiError: any) {
-          console.error('API call failed:', apiError);
-          
-          // If we don't have cached data, show the error
+        } else {
+          // If no data returned but no error thrown, check if we already have cached data
           if (!cachedData) {
-            setError(apiError);
-            alertApi.post({ message: `Error fetching VIP details: ${apiError.message}`, severity: 'error' });
+            // Use mock data if no cached data available
+            setVipDetails({
+              ...mockVipDetails,
+              id: vipId // Ensure the mock data uses the correct ID
+            });
+            setUsingMockData(true);
+            setUsingCachedData(false);
+            setError(new Error(`VIP with ID ${vipId} not found.`));
+            alertApi.post({ message: `VIP with ID ${vipId} not found.`, severity: 'warning' });
           }
-          // Otherwise, we'll continue using the cached data
         }
-      } catch (e: any) {
-        setError(e);
-        alertApi.post({ message: `Error fetching VIP details: ${e.message}`, severity: 'error' });
-      } finally {
-        setLoading(false);
+      } catch (apiError: any) {
+        console.error('API call failed:', apiError);
+        
+        // If we don't have cached data, use mock data
+        if (!cachedData) {
+          setVipDetails({
+            ...mockVipDetails,
+            id: vipId // Ensure the mock data uses the correct ID
+          });
+          setUsingMockData(true);
+          setUsingCachedData(false);
+          setError(apiError);
+          alertApi.post({ message: `Error fetching VIP details: ${apiError.message}`, severity: 'error' });
+        }
+        // Otherwise, we'll continue using the cached data
       }
-    };
-    fetchData();
-  }, [vipId, alertApi, identityApi, lbaasApi]);
+    } catch (e: any) {
+      setError(e);
+      alertApi.post({ message: `Error fetching VIP details: ${e.message}`, severity: 'error' });
+      
+      // Use mock data if no cached data available
+      if (!vipDetails) {
+        setVipDetails({
+          ...mockVipDetails,
+          id: vipId // Ensure the mock data uses the correct ID
+        });
+        setUsingMockData(true);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchVipDetails();
+  }, [vipId, alertApi, lbaasApi]);
 
   if (loading && !vipDetails) {
-    return <CircularProgress />;
+    return (
+      <Page themeId="tool">
+        <Header title="Loading VIP Details" />
+        <Content>
+          <Grid container justifyContent="center" alignItems="center" style={{ minHeight: '400px' }}>
+            <CircularProgress />
+          </Grid>
+        </Content>
+      </Page>
+    );
   }
 
   if (error && !vipDetails) {
@@ -151,10 +266,63 @@ export const VipViewPage = () => {
       <Page themeId="tool">
         <Header title="Error" />
         <Content>
-          <Typography color="error">{error.message}</Typography>
-          <Button component={RouterLink} to="/lbaas-frontend" variant="outlined" style={{ marginTop: '20px' }}>
-            Back to VIP List
-          </Button>
+          <ErrorPanel error={error} />
+          <Grid container spacing={2} style={{ marginTop: '20px' }}>
+            <Grid item>
+              <Button component={RouterLink} to="/lbaas-frontend" variant="outlined">
+                Back to VIP List
+              </Button>
+            </Grid>
+            {error.message.includes('Authentication') && (
+              <Grid item>
+                <Button 
+                  variant="contained" 
+                  color="primary" 
+                  startIcon={<LockOpen />}
+                  onClick={handleLoginDialogOpen}
+                >
+                  Login
+                </Button>
+              </Grid>
+            )}
+          </Grid>
+          
+          {/* Login Dialog */}
+          <Dialog open={isLoginDialogOpen} onClose={handleLoginDialogClose}>
+            <DialogTitle>Login to LBaaS</DialogTitle>
+            <DialogContent>
+              {loginError && (
+                <Typography color="error" style={{ marginBottom: '16px' }}>
+                  {loginError}
+                </Typography>
+              )}
+              <TextField
+                autoFocus
+                margin="dense"
+                label="Username"
+                type="text"
+                fullWidth
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+              <TextField
+                margin="dense"
+                label="Password"
+                type="password"
+                fullWidth
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={handleLoginDialogClose} color="primary">
+                Cancel
+              </Button>
+              <Button onClick={handleLogin} color="primary" variant="contained">
+                Login
+              </Button>
+            </DialogActions>
+          </Dialog>
         </Content>
       </Page>
     );
@@ -192,18 +360,90 @@ export const VipViewPage = () => {
         >
           Modify VIP
         </Button>
+        {!lbaasApi.isAuthenticated() && (
+          <Button 
+            variant="outlined" 
+            color="primary" 
+            startIcon={<LockOpen />}
+            onClick={handleLoginDialogOpen}
+            style={{ marginLeft: '10px' }}
+          >
+            Login
+          </Button>
+        )}
       </Header>
       <Content>
         <ContentHeader title="VIP Configuration">
           <SupportButton>Detailed information for the selected VIP.</SupportButton>
         </ContentHeader>
         
-        {error && (
-          <Paper style={{ padding: '10px', marginBottom: '20px', backgroundColor: '#fff3e0' }}>
-            <Typography variant="body2" color="error">
-              Warning: Using cached data. Could not fetch latest VIP details: {error.message}
+        {/* Authentication Warning */}
+        {!lbaasApi.isAuthenticated() && (
+          <InfoCard title="Authentication Required" severity="warning" style={{ marginBottom: '20px' }}>
+            <Typography variant="body1">
+              You are viewing {usingCachedData ? 'cached' : 'mock'} data. Please log in to fetch the latest VIP details and make changes.
             </Typography>
-          </Paper>
+            <Button 
+              variant="contained" 
+              color="primary" 
+              startIcon={<LockOpen />}
+              onClick={handleLoginDialogOpen}
+              style={{ marginTop: '10px' }}
+            >
+              Login
+            </Button>
+          </InfoCard>
+        )}
+        
+        {/* Mock Data Warning */}
+        {usingMockData && (
+          <InfoCard title="Using Mock Data" severity="info" style={{ marginBottom: '20px' }}>
+            <Typography variant="body1">
+              Showing mock data. The actual VIP details could not be fetched from the server.
+            </Typography>
+            <Button 
+              variant="outlined" 
+              color="primary" 
+              onClick={fetchVipDetails}
+              style={{ marginTop: '10px' }}
+            >
+              Retry
+            </Button>
+          </InfoCard>
+        )}
+        
+        {/* Cached Data Warning */}
+        {usingCachedData && lbaasApi.isAuthenticated() && (
+          <InfoCard title="Using Cached Data" severity="info" style={{ marginBottom: '20px' }}>
+            <Typography variant="body1">
+              Showing cached data. The latest data could not be fetched from the server.
+            </Typography>
+            <Button 
+              variant="outlined" 
+              color="primary" 
+              onClick={fetchVipDetails}
+              style={{ marginTop: '10px' }}
+            >
+              Retry
+            </Button>
+          </InfoCard>
+        )}
+        
+        {/* Error Warning */}
+        {error && vipDetails && !usingMockData && (
+          <InfoCard title="Warning" severity="error" style={{ marginBottom: '20px' }}>
+            <Typography variant="body1">
+              Error fetching latest data: {error.message}
+            </Typography>
+            <Button 
+              variant="outlined" 
+              color="primary" 
+              onClick={fetchVipDetails}
+              style={{ marginTop: '10px' }}
+            >
+              Retry
+            </Button>
+          </InfoCard>
         )}
         
         <Paper style={{ padding: '20px' }}>
@@ -292,6 +532,7 @@ export const VipViewPage = () => {
               to={`/lbaas-frontend/${vipId}/output`}
               variant="outlined"
               color="primary"
+              disabled={!lbaasApi.isAuthenticated()}
             >
               View Configuration Output
             </Button>
@@ -302,12 +543,50 @@ export const VipViewPage = () => {
               to={`/lbaas-frontend/${vipId}/promote`}
               variant="outlined"
               color="primary"
+              disabled={!lbaasApi.isAuthenticated()}
             >
               Promote to New Environment
             </Button>
           </Grid>
         </Grid>
       </Content>
+      
+      {/* Login Dialog */}
+      <Dialog open={isLoginDialogOpen} onClose={handleLoginDialogClose}>
+        <DialogTitle>Login to LBaaS</DialogTitle>
+        <DialogContent>
+          {loginError && (
+            <Typography color="error" style={{ marginBottom: '16px' }}>
+              {loginError}
+            </Typography>
+          )}
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Username"
+            type="text"
+            fullWidth
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+          />
+          <TextField
+            margin="dense"
+            label="Password"
+            type="password"
+            fullWidth
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleLoginDialogClose} color="primary">
+            Cancel
+          </Button>
+          <Button onClick={handleLogin} color="primary" variant="contained">
+            Login
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Page>
   );
 };

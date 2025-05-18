@@ -1,271 +1,385 @@
 import React, { useEffect, useState } from 'react';
-import { Typography, Grid, Button, CircularProgress, TextField, Paper, FormControl, InputLabel, Select, MenuItem } from '@material-ui/core';
-import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowBack } from '@material-ui/icons';
+import { Typography, Grid, Button, CircularProgress, Paper, Divider, TextField, MenuItem, FormControl, InputLabel, Select, FormHelperText, Dialog, DialogTitle, DialogContent, DialogActions } from '@material-ui/core';
+import { Link as RouterLink, useParams, useNavigate } from 'react-router-dom';
+import { ArrowBack, Save, LockOpen } from '@material-ui/icons';
 import {
   Header,
   Page,
   Content,
   ContentHeader,
   SupportButton,
+  InfoCard,
+  ErrorPanel
 } from '@backstage/core-components';
 import { useApi, alertApiRef } from '@backstage/core-plugin-api';
-import { lbaasFrontendApiRef, Vip, PoolMember } from '../../api';
+import { lbaasFrontendApiRef } from '../../api';
+
+// Interface for VIP data
+interface VipData {
+  id?: string;
+  vip_fqdn: string;
+  vip_ip: string;
+  port: number;
+  protocol: string;
+  environment: string;
+  datacenter: string;
+  app_id: string;
+  owner?: string;
+  status?: string;
+  pool_members?: Array<{ server_name: string; server_ip: string; server_port: number; weight: number; status?: string }>;
+  monitor?: { type: string; port?: number; send_string?: string; receive_string?: string; interval?: number; timeout?: number };
+  persistence?: { type: string; timeout?: number };
+}
+
+// Interface for form validation
+interface FormErrors {
+  vip_fqdn?: string;
+  vip_ip?: string;
+  port?: string;
+  protocol?: string;
+  environment?: string;
+  datacenter?: string;
+  app_id?: string;
+}
 
 export const VipEditPage = () => {
+  // Extract vipId from URL parameters
+  const { vipId } = useParams<{ vipId: string }>();
   const alertApi = useApi(alertApiRef);
   const lbaasApi = useApi(lbaasFrontendApiRef);
   const navigate = useNavigate();
-  const { fqdn } = useParams<{ fqdn: string }>();
   
-  const [loading, setLoading] = useState(false);
-  const [initialLoading, setInitialLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
-  const [formData, setFormData] = useState<Partial<Vip>>({});
-  
-  // Pool member management
-  const [poolMembers, setPoolMembers] = useState<PoolMember[]>([]);
-  const [currentPoolMember, setCurrentPoolMember] = useState<PoolMember>({
-    server_name: '',
-    server_ip: '',
-    server_port: 8443,
-    weight: 1
+  // Form state
+  const [formData, setFormData] = useState<VipData>({
+    vip_fqdn: '',
+    vip_ip: '',
+    port: 80,
+    protocol: 'HTTP',
+    environment: '',
+    datacenter: '',
+    app_id: '',
   });
-
-  useEffect(() => {
-    const loadVipDetails = async () => {
-      try {
-        setInitialLoading(true);
-        setError(null);
-        
-        console.log(`Loading VIP details for FQDN: ${fqdn}`);
-        
-        if (!fqdn) {
-          // If no FQDN in URL, try to get VIP from sessionStorage
-          const storedVip = sessionStorage.getItem('currentVip');
-          
-          if (!storedVip) {
-            throw new Error('VIP details not found. Please return to the VIP list and try again.');
-          }
-          
-          const vipData = JSON.parse(storedVip) as Vip;
-          console.log('Loaded VIP details from sessionStorage:', vipData);
-          
-          setFormData(vipData);
-          setPoolMembers(vipData.pool_members || []);
-          return;
-        }
-        
-        // Try to fetch VIP details from backend using FQDN
-        try {
-          // First, get all VIPs
-          const allVips = await lbaasApi.getVips();
-          console.log('Fetched all VIPs to find matching FQDN:', allVips);
-          
-          // Find the VIP with matching FQDN
-          const decodedFqdn = decodeURIComponent(fqdn);
-          const matchingVip = allVips.find(vip => vip.vip_fqdn === decodedFqdn);
-          
-          if (!matchingVip) {
-            throw new Error(`VIP with FQDN ${decodedFqdn} not found`);
-          }
-          
-          console.log('Found matching VIP:', matchingVip);
-          
-          // If VIP has an ID, fetch full details
-          if (matchingVip.id) {
-            console.log(`Fetching full VIP details for ID: ${matchingVip.id}`);
-            const vipData = await lbaasApi.getVip(matchingVip.id);
-            console.log('Fetched VIP details from backend:', vipData);
-            setFormData(vipData);
-            setPoolMembers(vipData.pool_members || []);
-          } else {
-            // If no ID, use the VIP from the list
-            console.log('Using VIP details from list (no ID available)');
-            setFormData(matchingVip);
-            setPoolMembers(matchingVip.pool_members || []);
-          }
-        } catch (e) {
-          console.error('Error fetching VIP from backend:', e);
-          
-          // Fallback to sessionStorage if backend fetch fails
-          const storedVip = sessionStorage.getItem('currentVip');
-          
-          if (!storedVip) {
-            throw new Error('Failed to fetch VIP details from backend and no backup found in sessionStorage.');
-          }
-          
-          console.log('Falling back to sessionStorage for VIP details');
-          const vipData = JSON.parse(storedVip) as Vip;
-          setFormData(vipData);
-          setPoolMembers(vipData.pool_members || []);
-        }
-      } catch (e: any) {
-        console.error('Error loading VIP details:', e);
-        setError(e);
-        alertApi.post({ message: `Error: ${e.message}`, severity: 'error' });
-      } finally {
-        setInitialLoading(false);
-      }
-    };
-    
-    loadVipDetails();
-  }, [alertApi, lbaasApi, fqdn]);
-
-  const handleChange = (event: React.ChangeEvent<{ name?: string; value: unknown }>) => {
-    const name = event.target.name as keyof Vip;
-    setFormData({
-      ...formData,
-      [name]: event.target.value,
-    });
+  
+  // UI state
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const [formErrors, setFormErrors] = useState<FormErrors>({});
+  const [isLoginDialogOpen, setIsLoginDialogOpen] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [usingCachedData, setUsingCachedData] = useState(false);
+  
+  // Environment options
+  const environments = ['Development', 'Testing', 'Staging', 'Production'];
+  
+  // Datacenter options based on environment
+  const datacenters: Record<string, string[]> = {
+    Development: ['DevDC1', 'DevDC2'],
+    Testing: ['TestDC1', 'TestDC2'],
+    Staging: ['StageDC1', 'StageDC2'],
+    Production: ['ProdDC1', 'ProdDC2', 'ProdDC3'],
   };
   
-  const handleNumericChange = (event: React.ChangeEvent<{ name?: string; value: unknown }>) => {
-    const name = event.target.name as keyof Vip;
-    const value = event.target.value as string;
-    setFormData({
-      ...formData,
-      [name]: value === '' ? '' : Number(value),
-    });
-  };
-  
-  const handlePoolMemberChange = (event: React.ChangeEvent<{ name?: string; value: unknown }>) => {
-    const name = event.target.name as keyof PoolMember;
-    const value = event.target.value as string;
-    
-    setCurrentPoolMember({
-      ...currentPoolMember,
-      [name]: name === 'server_port' || name === 'weight' 
-        ? (value === '' ? '' : Number(value)) 
-        : value,
-    });
-  };
-  
-  const addPoolMember = () => {
-    if (!currentPoolMember.server_name || !currentPoolMember.server_ip) {
-      alertApi.post({ message: 'Server name and IP are required for pool members', severity: 'error' });
-      return;
-    }
-    
-    const updatedPoolMembers = [...poolMembers, currentPoolMember];
-    setPoolMembers(updatedPoolMembers);
-    setFormData({
-      ...formData,
-      pool_members: updatedPoolMembers
-    });
-    
-    // Reset the form for the next pool member
-    setCurrentPoolMember({
-      server_name: '',
-      server_ip: '',
-      server_port: 8443,
-      weight: 1
-    });
-  };
-  
-  const removePoolMember = (index: number) => {
-    const updatedPoolMembers = poolMembers.filter((_, i) => i !== index);
-    setPoolMembers(updatedPoolMembers);
-    setFormData({
-      ...formData,
-      pool_members: updatedPoolMembers
-    });
+  // Protocol options
+  const protocols = ['HTTP', 'HTTPS', 'TCP', 'UDP'];
+
+  // Handle login dialog
+  const handleLoginDialogOpen = () => {
+    setIsLoginDialogOpen(true);
+    setLoginError(null);
   };
 
-  const validateForm = () => {
-    if (!formData.vip_fqdn) {
-      alertApi.post({ message: 'VIP FQDN is required', severity: 'error' });
-      return false;
-    }
-    
-    if (!formData.app_id) {
-      alertApi.post({ message: 'Application ID is required', severity: 'error' });
-      return false;
-    }
-    
-    if (!formData.port || formData.port <= 0) {
-      alertApi.post({ message: 'Valid port number is required', severity: 'error' });
-      return false;
-    }
-    
-    return true;
+  const handleLoginDialogClose = () => {
+    setIsLoginDialogOpen(false);
+    setLoginError(null);
   };
 
-  const handleBackToList = () => {
-    navigate('/lbaas-frontend');
-  };
-
-  const handleBackToView = () => {
-    if (formData.vip_fqdn) {
-      navigate(`/lbaas-frontend/view/${encodeURIComponent(formData.vip_fqdn)}`);
-    } else {
-      navigate('/lbaas-frontend');
+  const handleLogin = async () => {
+    try {
+      setLoginError(null);
+      await lbaasApi.login(username, password);
+      handleLoginDialogClose();
+      // Reload data after successful login
+      fetchVipDetails();
+    } catch (error: any) {
+      console.error('Login error:', error);
+      setLoginError(error.message || 'Login failed. Please try again.');
     }
   };
 
-  const handleSubmit = async () => {
-    if (!validateForm()) {
+  // Fetch VIP details
+  const fetchVipDetails = async () => {
+    if (!vipId) {
+      setError(new Error('VIP ID not found in URL.'));
+      setLoading(false);
       return;
     }
     
     try {
       setLoading(true);
       
-      console.log('Updating VIP with data:', formData);
-      const result = await lbaasApi.updateVip(formData.id || '', formData);
+      // Check if we have cached data in sessionStorage
+      const cachedData = sessionStorage.getItem(`vip_${vipId}`);
+      if (cachedData) {
+        try {
+          const parsedData = JSON.parse(cachedData);
+          setFormData(parsedData);
+          setUsingCachedData(true);
+          console.log('Using cached VIP data from sessionStorage');
+          setLoading(false);
+          // Continue fetching fresh data in the background
+        } catch (parseError) {
+          console.error('Error parsing cached VIP data:', parseError);
+          // Continue with API fetch if parsing fails
+        }
+      }
       
-      alertApi.post({ message: `VIP ${result.vip_fqdn} updated successfully`, severity: 'success' });
+      // Check if authenticated
+      if (!lbaasApi.isAuthenticated()) {
+        console.log('Not authenticated, using cached data if available');
+        if (!cachedData) {
+          setError(new Error('Authentication required to fetch VIP details.'));
+        }
+        setLoading(false);
+        return;
+      }
       
-      // Update the VIP in sessionStorage
-      if (result) {
-        sessionStorage.setItem('currentVip', JSON.stringify(result));
+      try {
+        // Use the API client to fetch VIP details
+        const data = await lbaasApi.getVip(vipId);
         
-        // Navigate to the view page with the FQDN in the URL
-        navigate(`/lbaas-frontend/view/${encodeURIComponent(result.vip_fqdn)}`);
-      } else {
-        // If no result, go back to list
-        navigate('/lbaas-frontend');
+        if (data) {
+          setFormData(data);
+          setUsingCachedData(false);
+          
+          // Cache the data in sessionStorage for future use
+          try {
+            sessionStorage.setItem(`vip_${vipId}`, JSON.stringify(data));
+          } catch (storageError) {
+            console.error('Error caching VIP data:', storageError);
+            // Non-critical error, continue without caching
+          }
+        } else {
+          // If no data returned but no error thrown, check if we already have cached data
+          if (!cachedData) {
+            setError(new Error(`VIP with ID ${vipId} not found.`));
+            alertApi.post({ message: `VIP with ID ${vipId} not found.`, severity: 'error' });
+          }
+        }
+      } catch (apiError: any) {
+        console.error('API call failed:', apiError);
+        
+        // If we don't have cached data, show the error
+        if (!cachedData) {
+          setError(apiError);
+          alertApi.post({ message: `Error fetching VIP details: ${apiError.message}`, severity: 'error' });
+        }
+        // Otherwise, we'll continue using the cached data
       }
     } catch (e: any) {
-      console.error('Error updating VIP:', e);
-      
-      // If authentication error, redirect to list page
-      if (e.message.includes('Authentication') || e.message.includes('login')) {
-        alertApi.post({ message: 'Authentication required. Please login again.', severity: 'error' });
-        navigate('/lbaas-frontend');
-      } else {
-        alertApi.post({ message: `Error: ${e.message}`, severity: 'error' });
-      }
+      setError(e);
+      alertApi.post({ message: `Error fetching VIP details: ${e.message}`, severity: 'error' });
     } finally {
       setLoading(false);
     }
   };
 
-  if (initialLoading) {
+  // Load VIP details on component mount
+  useEffect(() => {
+    fetchVipDetails();
+  }, [vipId, alertApi, lbaasApi]);
+
+  // Handle form field changes
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | { name?: string; value: unknown }>) => {
+    const { name, value } = e.target;
+    if (!name) return;
+    
+    setFormData(prev => ({
+      ...prev,
+      [name]: value,
+    }));
+    
+    // Clear validation error when field is changed
+    if (formErrors[name as keyof FormErrors]) {
+      setFormErrors(prev => ({
+        ...prev,
+        [name]: undefined,
+      }));
+    }
+    
+    // Reset datacenter if environment changes
+    if (name === 'environment') {
+      setFormData(prev => ({
+        ...prev,
+        datacenter: '',
+      }));
+    }
+  };
+
+  // Validate form
+  const validateForm = (): boolean => {
+    const errors: FormErrors = {};
+    
+    if (!formData.vip_fqdn) {
+      errors.vip_fqdn = 'FQDN is required';
+    } else if (!/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(formData.vip_fqdn)) {
+      errors.vip_fqdn = 'Invalid FQDN format';
+    }
+    
+    if (!formData.vip_ip) {
+      errors.vip_ip = 'IP Address is required';
+    } else if (!/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(formData.vip_ip)) {
+      errors.vip_ip = 'Invalid IP address format';
+    }
+    
+    if (!formData.port) {
+      errors.port = 'Port is required';
+    } else if (formData.port < 1 || formData.port > 65535) {
+      errors.port = 'Port must be between 1 and 65535';
+    }
+    
+    if (!formData.protocol) {
+      errors.protocol = 'Protocol is required';
+    }
+    
+    if (!formData.environment) {
+      errors.environment = 'Environment is required';
+    }
+    
+    if (!formData.datacenter) {
+      errors.datacenter = 'Datacenter is required';
+    }
+    
+    if (!formData.app_id) {
+      errors.app_id = 'Application ID is required';
+    }
+    
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  // Handle form submission
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!lbaasApi.isAuthenticated()) {
+      alertApi.post({ message: 'Authentication required to update VIP.', severity: 'error' });
+      handleLoginDialogOpen();
+      return;
+    }
+    
+    if (!validateForm()) {
+      alertApi.post({ message: 'Please fix the errors in the form.', severity: 'error' });
+      return;
+    }
+    
+    try {
+      setSaving(true);
+      
+      if (!vipId) {
+        throw new Error('VIP ID not found in URL.');
+      }
+      
+      const updatedVip = await lbaasApi.updateVip(vipId, formData);
+      
+      alertApi.post({ message: 'VIP updated successfully!', severity: 'success' });
+      
+      // Update cache
+      try {
+        sessionStorage.setItem(`vip_${vipId}`, JSON.stringify(updatedVip));
+      } catch (storageError) {
+        console.error('Error updating cached VIP data:', storageError);
+      }
+      
+      // Navigate back to VIP details page
+      navigate(`/lbaas-frontend/${vipId}/view`);
+    } catch (error: any) {
+      console.error('Error updating VIP:', error);
+      alertApi.post({ message: `Error updating VIP: ${error.message}`, severity: 'error' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Show loading state
+  if (loading && !formData.vip_fqdn) {
     return (
       <Page themeId="tool">
         <Header title="Loading VIP Details" />
         <Content>
-          <Grid container spacing={3} justifyContent="center">
-            <Grid item>
-              <CircularProgress />
-              <Typography style={{ marginTop: 16 }}>Loading VIP details...</Typography>
-            </Grid>
+          <Grid container justifyContent="center" alignItems="center" style={{ minHeight: '400px' }}>
+            <CircularProgress />
           </Grid>
         </Content>
       </Page>
     );
   }
 
-  if (error) {
+  // Show error state if no cached data
+  if (error && !formData.vip_fqdn) {
     return (
       <Page themeId="tool">
         <Header title="Error" />
         <Content>
-          <Typography color="error">{error.message}</Typography>
-          <Button onClick={handleBackToList} variant="outlined" style={{ marginTop: '20px' }}>
-            Back to VIP List
-          </Button>
+          <ErrorPanel error={error} />
+          <Grid container spacing={2} style={{ marginTop: '20px' }}>
+            <Grid item>
+              <Button component={RouterLink} to="/lbaas-frontend" variant="outlined">
+                Back to VIP List
+              </Button>
+            </Grid>
+            {error.message.includes('Authentication') && (
+              <Grid item>
+                <Button 
+                  variant="contained" 
+                  color="primary" 
+                  startIcon={<LockOpen />}
+                  onClick={handleLoginDialogOpen}
+                >
+                  Login
+                </Button>
+              </Grid>
+            )}
+          </Grid>
+          
+          {/* Login Dialog */}
+          <Dialog open={isLoginDialogOpen} onClose={handleLoginDialogClose}>
+            <DialogTitle>Login to LBaaS</DialogTitle>
+            <DialogContent>
+              {loginError && (
+                <Typography color="error" style={{ marginBottom: '16px' }}>
+                  {loginError}
+                </Typography>
+              )}
+              <TextField
+                autoFocus
+                margin="dense"
+                label="Username"
+                type="text"
+                fullWidth
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+              <TextField
+                margin="dense"
+                label="Password"
+                type="password"
+                fullWidth
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={handleLoginDialogClose} color="primary">
+                Cancel
+              </Button>
+              <Button onClick={handleLogin} color="primary" variant="contained">
+                Login
+              </Button>
+            </DialogActions>
+          </Dialog>
         </Content>
       </Page>
     );
@@ -273,230 +387,276 @@ export const VipEditPage = () => {
 
   return (
     <Page themeId="tool">
-      <Header title={`Edit VIP: ${formData.vip_fqdn}`} subtitle={`Application ID: ${formData.app_id}`}>
-        <Button onClick={handleBackToView} variant="outlined" startIcon={<ArrowBack />}>
-          Back to VIP Details
+      <Header 
+        title={`Edit VIP: ${formData.vip_fqdn}`}
+        subtitle={`Application ID: ${formData.app_id}`}>
+        <Button component={RouterLink} to="/lbaas-frontend" variant="outlined" startIcon={<ArrowBack />}>
+          Back to VIP List
         </Button>
+        {!lbaasApi.isAuthenticated() && (
+          <Button 
+            variant="outlined" 
+            color="primary" 
+            startIcon={<LockOpen />}
+            onClick={handleLoginDialogOpen}
+            style={{ marginLeft: '10px' }}
+          >
+            Login
+          </Button>
+        )}
       </Header>
       <Content>
-        <ContentHeader title="VIP Configuration">
-          <SupportButton>Edit the details of this VIP.</SupportButton>
+        <ContentHeader title="Edit VIP Configuration">
+          <SupportButton>Edit the configuration for this VIP.</SupportButton>
         </ContentHeader>
-        <Grid container spacing={3} component={Paper} style={{ padding: '20px' }}>
-          <Grid item xs={12} sm={6}>
-            <TextField
-              required
-              name="vip_fqdn"
-              label="VIP FQDN"
-              fullWidth
-              value={formData.vip_fqdn || ''}
-              onChange={handleChange}
-              helperText="Fully Qualified Domain Name for the VIP"
-            />
-          </Grid>
-          <Grid item xs={12} sm={6}>
-            <TextField
-              required
-              name="app_id"
-              label="Application ID"
-              fullWidth
-              value={formData.app_id || ''}
-              onChange={handleChange}
-              helperText="Unique identifier for the application"
-            />
-          </Grid>
-          <Grid item xs={12} sm={6}>
-            <TextField
-              name="vip_ip"
-              label="VIP IP Address"
-              fullWidth
-              value={formData.vip_ip || ''}
-              onChange={handleChange}
-              helperText="IP address for the VIP"
-            />
-          </Grid>
-          <Grid item xs={12} sm={6}>
-            <TextField
-              name="owner"
-              label="Owner"
-              fullWidth
-              value={formData.owner || ''}
-              onChange={handleChange}
-              helperText="Owner or responsible team for this VIP"
-            />
-          </Grid>
-          <Grid item xs={12} sm={3}>
-            <FormControl fullWidth required>
-              <InputLabel id="environment-label">Environment</InputLabel>
-              <Select
-                labelId="environment-label"
-                name="environment"
-                value={formData.environment || 'DEV'}
-                onChange={handleChange}
-              >
-                <MenuItem value="DEV">DEV</MenuItem>
-                <MenuItem value="UAT">UAT</MenuItem>
-                <MenuItem value="PROD">PROD</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} sm={3}>
-            <FormControl fullWidth required>
-              <InputLabel id="datacenter-label">Datacenter</InputLabel>
-              <Select
-                labelId="datacenter-label"
-                name="datacenter"
-                value={formData.datacenter || 'LADC'}
-                onChange={handleChange}
-              >
-                <MenuItem value="LADC">LADC</MenuItem>
-                <MenuItem value="NYDC">NYDC</MenuItem>
-                <MenuItem value="UKDC">UKDC</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} sm={3}>
-            <TextField
-              required
-              name="port"
-              label="Port"
-              type="number"
-              fullWidth
-              value={formData.port || ''}
-              onChange={handleNumericChange}
-              helperText="Port number for the VIP"
-            />
-          </Grid>
-          <Grid item xs={12} sm={3}>
-            <FormControl fullWidth required>
-              <InputLabel id="protocol-label">Protocol</InputLabel>
-              <Select
-                labelId="protocol-label"
-                name="protocol"
-                value={formData.protocol || 'TCP'}
-                onChange={handleChange}
-              >
-                <MenuItem value="TCP">TCP</MenuItem>
-                <MenuItem value="UDP">UDP</MenuItem>
-                <MenuItem value="HTTP">HTTP</MenuItem>
-                <MenuItem value="HTTPS">HTTPS</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-          
-          {/* Pool Members Section */}
-          <Grid item xs={12}>
-            <Typography variant="h6" style={{ marginTop: '20px', marginBottom: '10px' }}>
-              Pool Members
+        
+        {/* Authentication Warning */}
+        {!lbaasApi.isAuthenticated() && (
+          <InfoCard title="Authentication Required" severity="warning" style={{ marginBottom: '20px' }}>
+            <Typography variant="body1">
+              You are viewing cached data. Please log in to fetch the latest VIP details and make changes.
             </Typography>
-            <Typography variant="body2" color="textSecondary" paragraph>
-              Add or remove servers in the load balancing pool
+            <Button 
+              variant="contained" 
+              color="primary" 
+              startIcon={<LockOpen />}
+              onClick={handleLoginDialogOpen}
+              style={{ marginTop: '10px' }}
+            >
+              Login
+            </Button>
+          </InfoCard>
+        )}
+        
+        {/* Cached Data Warning */}
+        {usingCachedData && lbaasApi.isAuthenticated() && (
+          <InfoCard title="Using Cached Data" severity="info" style={{ marginBottom: '20px' }}>
+            <Typography variant="body1">
+              Showing cached data. The latest data could not be fetched from the server.
             </Typography>
-            
-            <Grid container spacing={2}>
-              <Grid item xs={12} sm={3}>
+            <Button 
+              variant="outlined" 
+              color="primary" 
+              onClick={fetchVipDetails}
+              style={{ marginTop: '10px' }}
+            >
+              Retry
+            </Button>
+          </InfoCard>
+        )}
+        
+        {/* Error Warning */}
+        {error && formData.vip_fqdn && (
+          <InfoCard title="Warning" severity="error" style={{ marginBottom: '20px' }}>
+            <Typography variant="body1">
+              Error fetching latest data: {error.message}
+            </Typography>
+            <Button 
+              variant="outlined" 
+              color="primary" 
+              onClick={fetchVipDetails}
+              style={{ marginTop: '10px' }}
+            >
+              Retry
+            </Button>
+          </InfoCard>
+        )}
+        
+        <Paper style={{ padding: '20px' }}>
+          <form onSubmit={handleSubmit}>
+            <Grid container spacing={3}>
+              {/* Basic Information */}
+              <Grid item xs={12}>
+                <Typography variant="h6">Basic Information</Typography>
+                <Divider style={{ marginTop: '8px', marginBottom: '16px' }} />
+              </Grid>
+              
+              <Grid item xs={12} sm={6}>
                 <TextField
-                  name="server_name"
-                  label="Server Name"
+                  label="FQDN"
+                  name="vip_fqdn"
+                  value={formData.vip_fqdn}
+                  onChange={handleChange}
                   fullWidth
-                  value={currentPoolMember.server_name || ''}
-                  onChange={handlePoolMemberChange}
+                  required
+                  error={!!formErrors.vip_fqdn}
+                  helperText={formErrors.vip_fqdn}
+                  disabled={!lbaasApi.isAuthenticated()}
                 />
               </Grid>
-              <Grid item xs={12} sm={3}>
+              
+              <Grid item xs={12} sm={6}>
                 <TextField
-                  name="server_ip"
-                  label="Server IP"
+                  label="IP Address"
+                  name="vip_ip"
+                  value={formData.vip_ip}
+                  onChange={handleChange}
                   fullWidth
-                  value={currentPoolMember.server_ip || ''}
-                  onChange={handlePoolMemberChange}
+                  required
+                  error={!!formErrors.vip_ip}
+                  helperText={formErrors.vip_ip}
+                  disabled={!lbaasApi.isAuthenticated()}
                 />
               </Grid>
-              <Grid item xs={12} sm={2}>
+              
+              <Grid item xs={12} sm={4}>
                 <TextField
-                  name="server_port"
-                  label="Server Port"
+                  label="Port"
+                  name="port"
                   type="number"
+                  value={formData.port}
+                  onChange={handleChange}
                   fullWidth
-                  value={currentPoolMember.server_port || ''}
-                  onChange={handlePoolMemberChange}
+                  required
+                  inputProps={{ min: 1, max: 65535 }}
+                  error={!!formErrors.port}
+                  helperText={formErrors.port}
+                  disabled={!lbaasApi.isAuthenticated()}
                 />
               </Grid>
-              <Grid item xs={12} sm={2}>
+              
+              <Grid item xs={12} sm={4}>
+                <FormControl fullWidth required error={!!formErrors.protocol} disabled={!lbaasApi.isAuthenticated()}>
+                  <InputLabel>Protocol</InputLabel>
+                  <Select
+                    name="protocol"
+                    value={formData.protocol}
+                    onChange={handleChange}
+                  >
+                    {protocols.map(protocol => (
+                      <MenuItem key={protocol} value={protocol}>{protocol}</MenuItem>
+                    ))}
+                  </Select>
+                  {formErrors.protocol && <FormHelperText>{formErrors.protocol}</FormHelperText>}
+                </FormControl>
+              </Grid>
+              
+              <Grid item xs={12} sm={4}>
                 <TextField
-                  name="weight"
-                  label="Weight"
-                  type="number"
+                  label="Application ID"
+                  name="app_id"
+                  value={formData.app_id}
+                  onChange={handleChange}
                   fullWidth
-                  value={currentPoolMember.weight || ''}
-                  onChange={handlePoolMemberChange}
+                  required
+                  error={!!formErrors.app_id}
+                  helperText={formErrors.app_id}
+                  disabled={!lbaasApi.isAuthenticated()}
                 />
               </Grid>
-              <Grid item xs={12} sm={2}>
+              
+              <Grid item xs={12} sm={6}>
+                <FormControl fullWidth required error={!!formErrors.environment} disabled={!lbaasApi.isAuthenticated()}>
+                  <InputLabel>Environment</InputLabel>
+                  <Select
+                    name="environment"
+                    value={formData.environment}
+                    onChange={handleChange}
+                  >
+                    {environments.map(env => (
+                      <MenuItem key={env} value={env}>{env}</MenuItem>
+                    ))}
+                  </Select>
+                  {formErrors.environment && <FormHelperText>{formErrors.environment}</FormHelperText>}
+                </FormControl>
+              </Grid>
+              
+              <Grid item xs={12} sm={6}>
+                <FormControl fullWidth required error={!!formErrors.datacenter} disabled={!formData.environment || !lbaasApi.isAuthenticated()}>
+                  <InputLabel>Datacenter</InputLabel>
+                  <Select
+                    name="datacenter"
+                    value={formData.datacenter}
+                    onChange={handleChange}
+                  >
+                    {formData.environment && datacenters[formData.environment]?.map(dc => (
+                      <MenuItem key={dc} value={dc}>{dc}</MenuItem>
+                    ))}
+                  </Select>
+                  {formErrors.datacenter && <FormHelperText>{formErrors.datacenter}</FormHelperText>}
+                </FormControl>
+              </Grid>
+              
+              {/* Pool Members Section */}
+              <Grid item xs={12} style={{ marginTop: '20px' }}>
+                <Typography variant="h6">Pool Members</Typography>
+                <Divider style={{ marginTop: '8px', marginBottom: '16px' }} />
+                <Typography variant="body2" color="textSecondary">
+                  Pool members can be edited in a future version of this application.
+                </Typography>
+              </Grid>
+              
+              {/* Health Monitor Section */}
+              <Grid item xs={12} style={{ marginTop: '20px' }}>
+                <Typography variant="h6">Health Monitor</Typography>
+                <Divider style={{ marginTop: '8px', marginBottom: '16px' }} />
+                <Typography variant="body2" color="textSecondary">
+                  Health monitor settings can be edited in a future version of this application.
+                </Typography>
+              </Grid>
+              
+              {/* Persistence Section */}
+              <Grid item xs={12} style={{ marginTop: '20px' }}>
+                <Typography variant="h6">Persistence</Typography>
+                <Divider style={{ marginTop: '8px', marginBottom: '16px' }} />
+                <Typography variant="body2" color="textSecondary">
+                  Persistence settings can be edited in a future version of this application.
+                </Typography>
+              </Grid>
+              
+              {/* Submit Button */}
+              <Grid item xs={12} style={{ marginTop: '20px' }}>
                 <Button
-                  variant="outlined"
+                  type="submit"
+                  variant="contained"
                   color="primary"
-                  onClick={addPoolMember}
-                  style={{ marginTop: '16px' }}
-                  fullWidth
+                  startIcon={<Save />}
+                  disabled={saving || !lbaasApi.isAuthenticated()}
                 >
-                  Add Member
+                  {saving ? 'Saving...' : 'Save Changes'}
                 </Button>
               </Grid>
             </Grid>
-            
-            {/* Display added pool members */}
-            {poolMembers.length > 0 && (
-              <Paper style={{ marginTop: '20px', padding: '10px' }}>
-                <Typography variant="subtitle1">Pool Members:</Typography>
-                {poolMembers.map((member, index) => (
-                  <Grid container spacing={1} key={index} style={{ marginTop: '8px' }}>
-                    <Grid item xs={3}>
-                      <Typography variant="body2">{member.server_name}</Typography>
-                    </Grid>
-                    <Grid item xs={3}>
-                      <Typography variant="body2">{member.server_ip}</Typography>
-                    </Grid>
-                    <Grid item xs={2}>
-                      <Typography variant="body2">Port: {member.server_port}</Typography>
-                    </Grid>
-                    <Grid item xs={2}>
-                      <Typography variant="body2">Weight: {member.weight}</Typography>
-                    </Grid>
-                    <Grid item xs={2}>
-                      <Button
-                        size="small"
-                        color="secondary"
-                        onClick={() => removePoolMember(index)}
-                      >
-                        Remove
-                      </Button>
-                    </Grid>
-                  </Grid>
-                ))}
-              </Paper>
-            )}
-          </Grid>
-          
-          <Grid item xs={12} style={{ marginTop: '20px' }}>
-            <Button
-              variant="contained"
-              color="primary"
-              onClick={handleSubmit}
-              disabled={loading}
-            >
-              {loading ? <CircularProgress size={24} /> : 'Update VIP'}
-            </Button>
-            <Button
-              variant="outlined"
-              onClick={handleBackToView}
-              style={{ marginLeft: '10px' }}
-            >
-              Cancel
-            </Button>
-          </Grid>
-        </Grid>
+          </form>
+        </Paper>
       </Content>
+      
+      {/* Login Dialog */}
+      <Dialog open={isLoginDialogOpen} onClose={handleLoginDialogClose}>
+        <DialogTitle>Login to LBaaS</DialogTitle>
+        <DialogContent>
+          {loginError && (
+            <Typography color="error" style={{ marginBottom: '16px' }}>
+              {loginError}
+            </Typography>
+          )}
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Username"
+            type="text"
+            fullWidth
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+          />
+          <TextField
+            margin="dense"
+            label="Password"
+            type="password"
+            fullWidth
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleLoginDialogClose} color="primary">
+            Cancel
+          </Button>
+          <Button onClick={handleLogin} color="primary" variant="contained">
+            Login
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Page>
   );
 };

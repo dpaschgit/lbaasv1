@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Typography, Grid, Button, CircularProgress, Paper, Tabs, Tab, Box } from '@material-ui/core';
-import { Link as RouterLink, useParams, useLocation } from 'react-router-dom';
-import { ArrowBack, Refresh } from '@material-ui/icons';
+import { Typography, Grid, Button, CircularProgress, Paper, Divider, List, ListItem, ListItemText, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Tab, Tabs, Box } from '@material-ui/core';
+import { Link as RouterLink, useParams, useNavigate } from 'react-router-dom';
+import { ArrowBack, LockOpen, Refresh, Code } from '@material-ui/icons';
 import {
   Header,
   Page,
@@ -9,17 +9,34 @@ import {
   ContentHeader,
   SupportButton,
   InfoCard,
+  ErrorPanel,
   CodeSnippet
 } from '@backstage/core-components';
 import { useApi, alertApiRef, identityApiRef } from '@backstage/core-plugin-api';
 import { lbaasFrontendApiRef } from '../../api';
 
-interface TabPanelProps {
-  children?: React.ReactNode;
-  index: number;
-  value: number;
+// Interface for translator output data
+interface TranslatorOutput {
+  id: string;
+  vip_id: string;
+  standard_config: any;
+  environment: string;
+  datacenter: string;
+  lb_type: string;
+  created_at?: string;
+  last_updated?: string;
+  created_by?: string;
+  updated_by?: string;
 }
 
+// Interface for tab panel props
+interface TabPanelProps {
+  children?: React.ReactNode;
+  index: any;
+  value: any;
+}
+
+// Tab Panel component
 function TabPanel(props: TabPanelProps) {
   const { children, value, index, ...other } = props;
 
@@ -40,55 +57,61 @@ function TabPanel(props: TabPanelProps) {
   );
 }
 
-function a11yProps(index: number) {
+// Helper function for tab accessibility
+function a11yProps(index: any) {
   return {
     id: `translator-tab-${index}`,
     'aria-controls': `translator-tabpanel-${index}`,
   };
 }
 
-// Mock interfaces for MongoDB configuration and translator output
-interface MongoDBConfig {
-  id: string;
-  vip_id: string;
-  vip_fqdn: string;
-  environment: string;
-  datacenter: string;
-  lb_type: string;
-  config: any;
-  created_at: string;
-  updated_at: string;
-}
-
-interface TranslatorOutput {
-  f5_output: string;
-  nginx_output: string;
-  avi_output: string;
-}
-
 export const TranslatorOutputPage = () => {
   // Use vipId parameter consistently across all components
   const { vipId } = useParams<{ vipId: string }>();
-  const location = useLocation();
   const alertApi = useApi(alertApiRef);
   const identityApi = useApi(identityApiRef);
   const lbaasApi = useApi(lbaasFrontendApiRef);
-  const [tabValue, setTabValue] = useState(0);
-  const [mongoDBConfig, setMongoDBConfig] = useState<MongoDBConfig | null>(null);
+  const navigate = useNavigate();
   const [translatorOutput, setTranslatorOutput] = useState<TranslatorOutput | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [isLoginDialogOpen, setIsLoginDialogOpen] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [usingCachedData, setUsingCachedData] = useState(false);
+  const [tabValue, setTabValue] = useState(0);
 
+  // Handle tab change
   const handleTabChange = (event: React.ChangeEvent<{}>, newValue: number) => {
     setTabValue(newValue);
   };
 
-  const handleRefresh = () => {
-    setLoading(true);
-    fetchData();
+  // Handle login dialog
+  const handleLoginDialogOpen = () => {
+    setIsLoginDialogOpen(true);
+    setLoginError(null);
   };
 
-  const fetchData = async () => {
+  const handleLoginDialogClose = () => {
+    setIsLoginDialogOpen(false);
+    setLoginError(null);
+  };
+
+  const handleLogin = async () => {
+    try {
+      setLoginError(null);
+      await lbaasApi.login(username, password);
+      handleLoginDialogClose();
+      // Reload data after successful login
+      fetchTranslatorOutput();
+    } catch (error: any) {
+      console.error('Login error:', error);
+      setLoginError(error.message || 'Login failed. Please try again.');
+    }
+  };
+
+  const fetchTranslatorOutput = async () => {
     if (!vipId) {
       setError(new Error('VIP ID not found in URL.'));
       setLoading(false);
@@ -98,212 +121,147 @@ export const TranslatorOutputPage = () => {
     try {
       setLoading(true);
       
-      // In a real implementation, these would be actual API calls to your backend
-      // For now, we'll use mock data to demonstrate the UI
-      
-      // Mock MongoDB configuration
-      const configData: MongoDBConfig = {
-        id: "config_" + vipId,
-        vip_id: vipId,
-        vip_fqdn: "app1.prod.ladc.davelab.net",
-        environment: "PROD",
-        datacenter: "LADC",
-        lb_type: "F5",
-        config: {
-          virtual_server: {
-            name: "vs_app1_prod_443",
-            ip_address: "10.1.1.101",
-            port: 443,
-            protocol: "HTTPS"
-          },
-          pool: {
-            name: "pool_app1_prod",
-            lb_method: "ROUND_ROBIN",
-            members: [
-              { ip: "192.168.10.1", port: 8443, enabled: true },
-              { ip: "192.168.10.2", port: 8443, enabled: true }
-            ]
-          },
-          monitor: {
-            type: "HTTPS",
-            interval: 10,
-            timeout: 3,
-            send_string: "GET /health",
-            receive_string: "200 OK"
-          },
-          persistence: {
-            type: "SOURCE_IP",
-            timeout: 1800
-          },
-          ssl_profile: {
-            cert_name: "cert_app1_prod",
-            key_name: "key_app1_prod"
-          }
-        },
-        created_at: "2023-03-15T10:00:00Z",
-        updated_at: "2023-03-16T11:30:00Z"
-      };
-      
-      setMongoDBConfig(configData);
-      
-      // Mock translator output files
-      const outputData: TranslatorOutput = {
-        f5_output: `{
-  "class": "Application",
-  "template": "https",
-  "serviceMain": {
-    "class": "Service_HTTPS",
-    "virtualAddresses": ["10.1.1.101"],
-    "virtualPort": 443,
-    "pool": "pool_app1_prod",
-    "serverTLS": "tls_server",
-    "persistenceMethods": ["source-address"],
-    "profileHTTP": { "use": "basic" }
-  },
-  "pool_app1_prod": {
-    "class": "Pool",
-    "monitors": [
-      "https_monitor"
-    ],
-    "members": [
-      {
-        "servicePort": 8443,
-        "serverAddresses": [
-          "192.168.10.1",
-          "192.168.10.2"
-        ]
+      // Check if we have cached data in sessionStorage
+      const cachedData = sessionStorage.getItem(`translator_output_${vipId}`);
+      if (cachedData) {
+        try {
+          const parsedData = JSON.parse(cachedData);
+          setTranslatorOutput(parsedData);
+          setUsingCachedData(true);
+          console.log('Using cached translator output from sessionStorage');
+          // Continue fetching fresh data in the background
+        } catch (parseError) {
+          console.error('Error parsing cached translator output data:', parseError);
+          // Continue with API fetch if parsing fails
+        }
       }
-    ]
-  },
-  "https_monitor": {
-    "class": "Monitor",
-    "monitorType": "https",
-    "send": "GET /health\\r\\n",
-    "receive": "200 OK"
-  },
-  "tls_server": {
-    "class": "TLS_Server",
-    "certificates": [
-      {
-        "certificate": "cert_app1_prod"
+      
+      // Check if authenticated
+      if (!lbaasApi.isAuthenticated()) {
+        console.log('Not authenticated, using cached data if available');
+        if (!cachedData) {
+          setError(new Error('Authentication required to fetch translator output.'));
+        }
+        setLoading(false);
+        return;
       }
-    ]
-  },
-  "cert_app1_prod": {
-    "class": "Certificate",
-    "certificate": "-----BEGIN CERTIFICATE-----\\nMIIDXTCCAkWgAwIBAgIJAJC1HiIAZAiIMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV\\n-----END CERTIFICATE-----",
-    "privateKey": "-----BEGIN PRIVATE KEY-----\\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQDFkPCXNJAILgFs\\n-----END PRIVATE KEY-----"
-  }
-}`,
-        nginx_output: `server {
-    listen 443 ssl;
-    server_name app1.prod.ladc.davelab.net;
-    
-    ssl_certificate /etc/nginx/certs/app1_prod.crt;
-    ssl_certificate_key /etc/nginx/certs/app1_prod.key;
-    
-    location / {
-        proxy_pass https://pool_app1_prod;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+      
+      try {
+        // Use the API client to fetch translator output
+        // Note: This is a mock implementation as the actual API endpoint is not yet available
+        // In a real implementation, this would call lbaasApi.getTranslatorOutput(vipId)
         
-        # Source IP persistence
-        proxy_cookie_path / "/; HttpOnly; SameSite=strict";
-    }
-}
-
-upstream pool_app1_prod {
-    ip_hash;  # Source IP persistence
-    server 192.168.10.1:8443;
-    server 192.168.10.2:8443;
-    
-    # Health check
-    health_check uri=/health interval=10s match=status_ok;
-}
-
-match status_ok {
-    status 200;
-}`,
-        avi_output: `{
-  "virtualservice": {
-    "name": "vs_app1_prod_443",
-    "ip_address": "10.1.1.101",
-    "services": [
-      {
-        "port": 443,
-        "enable_ssl": true
+        // Simulate API call with a timeout
+        setTimeout(async () => {
+          try {
+            // First try to get the VIP details to ensure it exists
+            const vipDetails = await lbaasApi.getVip(vipId);
+            
+            if (!vipDetails) {
+              throw new Error(`VIP with ID ${vipId} not found.`);
+            }
+            
+            // Mock translator output data based on VIP details
+            // In a real implementation, this would come from the backend API
+            const mockOutput: TranslatorOutput = {
+              id: `config-${vipId}`,
+              vip_id: vipId,
+              standard_config: {
+                metadata: {
+                  environment: vipDetails.environment,
+                  datacenter: vipDetails.datacenter || 'LADC',
+                  lb_type: 'NGINX', // Mock value
+                },
+                virtual_server: {
+                  name: vipDetails.vip_fqdn,
+                  ip_address: vipDetails.vip_ip,
+                  port: vipDetails.port,
+                  protocol: vipDetails.protocol,
+                },
+                pool: {
+                  name: `pool-${vipDetails.vip_fqdn}`,
+                  lb_method: 'round_robin',
+                  members: vipDetails.pool_members?.map(member => ({
+                    name: member.server_name || `server-${member.server_ip}`,
+                    ip_address: member.server_ip,
+                    port: member.server_port,
+                    weight: member.weight || 1,
+                    enabled: true,
+                  })) || [],
+                },
+                health_monitor: vipDetails.monitor ? {
+                  type: vipDetails.monitor.type || 'http',
+                  interval: vipDetails.monitor.interval || 5,
+                  timeout: vipDetails.monitor.timeout || 16,
+                  send_string: vipDetails.monitor.send_string || 'GET / HTTP/1.1\r\nHost: localhost\r\n\r\n',
+                  receive_string: vipDetails.monitor.receive_string || '200 OK',
+                } : undefined,
+                persistence: vipDetails.persistence ? {
+                  type: vipDetails.persistence.type || 'cookie',
+                  timeout: vipDetails.persistence.timeout || 3600,
+                } : undefined,
+              },
+              environment: vipDetails.environment,
+              datacenter: vipDetails.datacenter || 'LADC',
+              lb_type: 'NGINX', // Mock value
+              created_at: new Date().toISOString(),
+              last_updated: new Date().toISOString(),
+              created_by: 'system',
+              updated_by: 'system',
+            };
+            
+            setTranslatorOutput(mockOutput);
+            setUsingCachedData(false);
+            
+            // Cache the data in sessionStorage for future use
+            try {
+              sessionStorage.setItem(`translator_output_${vipId}`, JSON.stringify(mockOutput));
+            } catch (storageError) {
+              console.error('Error caching translator output data:', storageError);
+              // Non-critical error, continue without caching
+            }
+          } catch (apiError: any) {
+            console.error('API call failed:', apiError);
+            
+            // If we don't have cached data, show the error
+            if (!cachedData) {
+              setError(apiError);
+              alertApi.post({ message: `Error fetching translator output: ${apiError.message}`, severity: 'error' });
+            }
+            // Otherwise, we'll continue using the cached data
+          } finally {
+            setLoading(false);
+          }
+        }, 1000); // Simulate network delay
+        
+      } catch (apiError: any) {
+        console.error('API call failed:', apiError);
+        
+        // If we don't have cached data, show the error
+        if (!cachedData) {
+          setError(apiError);
+          alertApi.post({ message: `Error fetching translator output: ${apiError.message}`, severity: 'error' });
+        }
+        // Otherwise, we'll continue using the cached data
+        setLoading(false);
       }
-    ],
-    "pool_ref": "/api/pool/pool_app1_prod",
-    "ssl_key_and_certificate_refs": [
-      "/api/sslkeyandcertificate/cert_app1_prod"
-    ],
-    "application_profile_ref": "/api/applicationprofile/system-https",
-    "network_profile_ref": "/api/networkprofile/system-tcp-proxy"
-  },
-  "pool": {
-    "name": "pool_app1_prod",
-    "servers": [
-      {
-        "ip": {
-          "addr": "192.168.10.1",
-          "type": "V4"
-        },
-        "port": 8443,
-        "enabled": true
-      },
-      {
-        "ip": {
-          "addr": "192.168.10.2",
-          "type": "V4"
-        },
-        "port": 8443,
-        "enabled": true
-      }
-    ],
-    "health_monitor_refs": [
-      "/api/healthmonitor/https_monitor"
-    ],
-    "lb_algorithm": "LB_ALGORITHM_ROUND_ROBIN"
-  },
-  "healthmonitor": {
-    "name": "https_monitor",
-    "type": "HEALTH_MONITOR_HTTPS",
-    "https_monitor": {
-      "http_request": "GET /health",
-      "http_response_code": [
-        "HTTP_2XX"
-      ]
-    },
-    "monitor_port": 8443,
-    "receive_timeout": 3,
-    "interval": 10
-  }
-}`
-      };
-      
-      setTranslatorOutput(outputData);
-      
     } catch (e: any) {
       setError(e);
-      alertApi.post({ message: `Error fetching configuration data: ${e.message}`, severity: 'error' });
-    } finally {
+      alertApi.post({ message: `Error fetching translator output: ${e.message}`, severity: 'error' });
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchData();
+    fetchTranslatorOutput();
   }, [vipId, alertApi, identityApi, lbaasApi]);
 
-  if (loading) {
+  if (loading && !translatorOutput) {
     return (
       <Page themeId="tool">
-        <Header title="Loading Configuration Output" />
+        <Header title="Loading Translator Output" />
         <Content>
-          <Grid container justifyContent="center" alignItems="center" style={{ height: '400px' }}>
+          <Grid container justifyContent="center" alignItems="center" style={{ minHeight: '400px' }}>
             <CircularProgress />
           </Grid>
         </Content>
@@ -311,26 +269,79 @@ match status_ok {
     );
   }
 
-  if (error) {
+  if (error && !translatorOutput) {
     return (
       <Page themeId="tool">
         <Header title="Error" />
         <Content>
-          <Typography color="error">{error.message}</Typography>
-          <Button component={RouterLink} to="/lbaas-frontend" variant="outlined" style={{ marginTop: '20px' }}>
-            Back to VIP List
-          </Button>
+          <ErrorPanel error={error} />
+          <Grid container spacing={2} style={{ marginTop: '20px' }}>
+            <Grid item>
+              <Button component={RouterLink} to={`/lbaas-frontend/${vipId}/view`} variant="outlined">
+                Back to VIP Details
+              </Button>
+            </Grid>
+            {error.message.includes('Authentication') && (
+              <Grid item>
+                <Button 
+                  variant="contained" 
+                  color="primary" 
+                  startIcon={<LockOpen />}
+                  onClick={handleLoginDialogOpen}
+                >
+                  Login
+                </Button>
+              </Grid>
+            )}
+          </Grid>
+          
+          {/* Login Dialog */}
+          <Dialog open={isLoginDialogOpen} onClose={handleLoginDialogClose}>
+            <DialogTitle>Login to LBaaS</DialogTitle>
+            <DialogContent>
+              {loginError && (
+                <Typography color="error" style={{ marginBottom: '16px' }}>
+                  {loginError}
+                </Typography>
+              )}
+              <TextField
+                autoFocus
+                margin="dense"
+                label="Username"
+                type="text"
+                fullWidth
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+              <TextField
+                margin="dense"
+                label="Password"
+                type="password"
+                fullWidth
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={handleLoginDialogClose} color="primary">
+                Cancel
+              </Button>
+              <Button onClick={handleLogin} color="primary" variant="contained">
+                Login
+              </Button>
+            </DialogActions>
+          </Dialog>
         </Content>
       </Page>
     );
   }
 
-  if (!mongoDBConfig || !translatorOutput) {
+  if (!translatorOutput) {
     return (
       <Page themeId="tool">
-        <Header title="Configuration Not Found" />
+        <Header title="Translator Output Not Found" />
         <Content>
-          <Typography>The requested configuration could not be found.</Typography>
+          <Typography>The requested translator output could not be found.</Typography>
           <Button component={RouterLink} to={`/lbaas-frontend/${vipId}/view`} variant="outlined" style={{ marginTop: '20px' }}>
             Back to VIP Details
           </Button>
@@ -339,66 +350,365 @@ match status_ok {
     );
   }
 
-  const lbType = mongoDBConfig.lb_type || 'Unknown';
-  const outputKey = lbType.toLowerCase() + '_output' as keyof TranslatorOutput;
-  const currentOutput = translatorOutput[outputKey] || 'No output available for this load balancer type.';
+  // Format the standard config as JSON string for display
+  const standardConfigJson = JSON.stringify(translatorOutput.standard_config, null, 2);
+  
+  // Generate vendor-specific configuration (mock implementation)
+  const generateVendorConfig = (lbType: string, standardConfig: any): string => {
+    // In a real implementation, this would use the translator module to generate vendor-specific config
+    // For now, we'll just return a formatted version of the standard config with some vendor-specific comments
+    
+    if (lbType === 'NGINX') {
+      return `# NGINX Configuration for ${standardConfig.virtual_server?.name}
+server {
+    listen ${standardConfig.virtual_server?.port};
+    server_name ${standardConfig.virtual_server?.name};
+    
+    location / {
+        proxy_pass http://${standardConfig.pool?.name};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        ${standardConfig.persistence ? `# Persistence enabled: ${standardConfig.persistence.type}` : ''}
+    }
+}
+
+upstream ${standardConfig.pool?.name} {
+    ${standardConfig.pool?.lb_method === 'round_robin' ? 'least_conn;' : '# Using default round robin'}
+    ${standardConfig.pool?.members?.map((member: any) => 
+      `    server ${member.ip_address}:${member.port} weight=${member.weight};`
+    ).join('\n')}
+}
+
+${standardConfig.health_monitor ? `# Health monitor configuration:
+# Type: ${standardConfig.health_monitor.type}
+# Interval: ${standardConfig.health_monitor.interval}s
+# Timeout: ${standardConfig.health_monitor.timeout}s` : ''}`;
+    } else if (lbType === 'F5') {
+      return `# F5 Configuration for ${standardConfig.virtual_server?.name}
+ltm virtual ${standardConfig.virtual_server?.name} {
+    destination ${standardConfig.virtual_server?.ip_address}:${standardConfig.virtual_server?.port}
+    ip-protocol tcp
+    mask 255.255.255.255
+    pool ${standardConfig.pool?.name}
+    profiles {
+        http { }
+        tcp { }
+    }
+    ${standardConfig.persistence ? `persist {
+        ${standardConfig.persistence.type} {
+            default yes
+            timeout ${standardConfig.persistence.timeout}
+        }
+    }` : ''}
+    source-address-translation {
+        type automap
+    }
+}
+
+ltm pool ${standardConfig.pool?.name} {
+    members {
+        ${standardConfig.pool?.members?.map((member: any) => 
+          `${member.ip_address}:${member.port} {
+            address ${member.ip_address}
+            session ${member.enabled ? 'user-enabled' : 'user-disabled'}
+            ratio ${member.weight}
+        }`
+        ).join('\n        ')}
+    }
+    monitor ${standardConfig.health_monitor?.type || 'http'}
+    ${standardConfig.pool?.lb_method === 'round_robin' ? 'load-balancing-mode round-robin' : ''}
+}
+
+${standardConfig.health_monitor ? `ltm monitor ${standardConfig.health_monitor.type} ${standardConfig.virtual_server?.name}_monitor {
+    interval ${standardConfig.health_monitor.interval}
+    timeout ${standardConfig.health_monitor.timeout}
+    send "${standardConfig.health_monitor.send_string}"
+    recv "${standardConfig.health_monitor.receive_string}"
+}` : ''}`;
+    } else if (lbType === 'AVI') {
+      return `# AVI Configuration for ${standardConfig.virtual_server?.name}
+{
+  "virtualservice": {
+    "name": "${standardConfig.virtual_server?.name}",
+    "ip_address": "${standardConfig.virtual_server?.ip_address}",
+    "services": [
+      {
+        "port": ${standardConfig.virtual_server?.port},
+        "protocol": "${standardConfig.virtual_server?.protocol}"
+      }
+    ],
+    "pool_ref": "${standardConfig.pool?.name}",
+    ${standardConfig.persistence ? `"persistence_profile": {
+      "type": "${standardConfig.persistence.type.toUpperCase()}",
+      "timeout": ${standardConfig.persistence.timeout}
+    },` : ''}
+    "analytics_profile": {
+      "name": "System-Analytics-Profile"
+    }
+  },
+  "pool": {
+    "name": "${standardConfig.pool?.name}",
+    "lb_algorithm": "${standardConfig.pool?.lb_method.toUpperCase().replace('-', '_')}",
+    "servers": [
+      ${standardConfig.pool?.members?.map((member: any) => 
+        `{
+        "ip": "${member.ip_address}",
+        "port": ${member.port},
+        "ratio": ${member.weight},
+        "enabled": ${member.enabled}
+      }`
+      ).join(',\n      ')}
+    ],
+    ${standardConfig.health_monitor ? `"health_monitor_refs": [
+      "${standardConfig.virtual_server?.name}_monitor"
+    ]` : ''}
+  }${standardConfig.health_monitor ? `,
+  "healthmonitor": {
+    "name": "${standardConfig.virtual_server?.name}_monitor",
+    "type": "${standardConfig.health_monitor.type.toUpperCase()}",
+    "interval": ${standardConfig.health_monitor.interval},
+    "timeout": ${standardConfig.health_monitor.timeout},
+    "send": "${standardConfig.health_monitor.send_string.replace(/\r\n/g, '\\r\\n')}",
+    "receive": "${standardConfig.health_monitor.receive_string}"
+  }` : ''}
+}`;
+    } else {
+      return `# Configuration for ${standardConfig.virtual_server?.name} (${lbType})
+# This is a placeholder for ${lbType} configuration
+# The actual implementation would use the translator module to generate vendor-specific config
+
+${JSON.stringify(standardConfig, null, 2)}`;
+    }
+  };
+
+  // Generate vendor-specific configurations
+  const nginxConfig = generateVendorConfig('NGINX', translatorOutput.standard_config);
+  const f5Config = generateVendorConfig('F5', translatorOutput.standard_config);
+  const aviConfig = generateVendorConfig('AVI', translatorOutput.standard_config);
 
   return (
     <Page themeId="tool">
       <Header 
-        title={`Configuration Output: ${mongoDBConfig.vip_fqdn}`}
-        subtitle={`Environment: ${mongoDBConfig.environment}, Datacenter: ${mongoDBConfig.datacenter}`}>
+        title={`Translator Output: ${translatorOutput.standard_config.virtual_server?.name || 'Unknown VIP'}`}
+        subtitle={`Environment: ${translatorOutput.environment}, Datacenter: ${translatorOutput.datacenter}`}>
         <Button component={RouterLink} to={`/lbaas-frontend/${vipId}/view`} variant="outlined" startIcon={<ArrowBack />}>
           Back to VIP Details
         </Button>
         <Button 
           variant="outlined" 
           color="primary" 
-          startIcon={<Refresh />} 
-          onClick={handleRefresh}
+          startIcon={<Refresh />}
+          onClick={fetchTranslatorOutput}
           style={{ marginLeft: '10px' }}
         >
           Refresh
         </Button>
+        {!lbaasApi.isAuthenticated() && (
+          <Button 
+            variant="outlined" 
+            color="primary" 
+            startIcon={<LockOpen />}
+            onClick={handleLoginDialogOpen}
+            style={{ marginLeft: '10px' }}
+          >
+            Login
+          </Button>
+        )}
       </Header>
       <Content>
-        <ContentHeader title={`Load Balancer Type: ${lbType}`}>
-          <SupportButton>View the standardized configuration and translator output files.</SupportButton>
+        <ContentHeader title="Load Balancer Configuration">
+          <SupportButton>View the vendor-agnostic and vendor-specific configurations for this VIP.</SupportButton>
         </ContentHeader>
         
-        <Paper>
+        {/* Authentication Warning */}
+        {!lbaasApi.isAuthenticated() && (
+          <InfoCard title="Authentication Required" severity="warning" style={{ marginBottom: '20px' }}>
+            <Typography variant="body1">
+              You are viewing cached data. Please log in to fetch the latest translator output.
+            </Typography>
+            <Button 
+              variant="contained" 
+              color="primary" 
+              startIcon={<LockOpen />}
+              onClick={handleLoginDialogOpen}
+              style={{ marginTop: '10px' }}
+            >
+              Login
+            </Button>
+          </InfoCard>
+        )}
+        
+        {/* Cached Data Warning */}
+        {usingCachedData && lbaasApi.isAuthenticated() && (
+          <InfoCard title="Using Cached Data" severity="info" style={{ marginBottom: '20px' }}>
+            <Typography variant="body1">
+              Showing cached translator output. The latest data could not be fetched from the server.
+            </Typography>
+            <Button 
+              variant="outlined" 
+              color="primary" 
+              onClick={fetchTranslatorOutput}
+              style={{ marginTop: '10px' }}
+            >
+              Retry
+            </Button>
+          </InfoCard>
+        )}
+        
+        {/* Error Warning */}
+        {error && translatorOutput && (
+          <InfoCard title="Warning" severity="error" style={{ marginBottom: '20px' }}>
+            <Typography variant="body1">
+              Error fetching latest data: {error.message}
+            </Typography>
+            <Button 
+              variant="outlined" 
+              color="primary" 
+              onClick={fetchTranslatorOutput}
+              style={{ marginTop: '10px' }}
+            >
+              Retry
+            </Button>
+          </InfoCard>
+        )}
+        
+        <Paper style={{ padding: '20px' }}>
+          <Grid container spacing={3}>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="subtitle1"><strong>VIP ID:</strong> {translatorOutput.vip_id}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="subtitle1"><strong>Load Balancer Type:</strong> {translatorOutput.lb_type}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="subtitle1"><strong>Environment:</strong> {translatorOutput.environment}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="subtitle1"><strong>Datacenter:</strong> {translatorOutput.datacenter}</Typography>
+            </Grid>
+            {translatorOutput.created_at && (
+              <Grid item xs={12} sm={6}>
+                <Typography variant="subtitle1"><strong>Created At:</strong> {new Date(translatorOutput.created_at).toLocaleString()}</Typography>
+              </Grid>
+            )}
+            {translatorOutput.last_updated && (
+              <Grid item xs={12} sm={6}>
+                <Typography variant="subtitle1"><strong>Last Updated:</strong> {new Date(translatorOutput.last_updated).toLocaleString()}</Typography>
+              </Grid>
+            )}
+            {translatorOutput.created_by && (
+              <Grid item xs={12} sm={6}>
+                <Typography variant="subtitle1"><strong>Created By:</strong> {translatorOutput.created_by}</Typography>
+              </Grid>
+            )}
+            {translatorOutput.updated_by && (
+              <Grid item xs={12} sm={6}>
+                <Typography variant="subtitle1"><strong>Updated By:</strong> {translatorOutput.updated_by}</Typography>
+              </Grid>
+            )}
+          </Grid>
+          
+          <Divider style={{ margin: '20px 0' }} />
+          
+          <Typography variant="h6" style={{ marginBottom: '16px' }}>Configuration Output</Typography>
+          
           <Tabs
             value={tabValue}
             onChange={handleTabChange}
             indicatorColor="primary"
             textColor="primary"
-            variant="fullWidth"
+            variant="scrollable"
+            scrollButtons="auto"
+            aria-label="translator output tabs"
           >
-            <Tab label="MongoDB Configuration" {...a11yProps(0)} />
-            <Tab label="Translator Output Files" {...a11yProps(1)} />
+            <Tab label="Standard Config" icon={<Code />} {...a11yProps(0)} />
+            <Tab label="NGINX" icon={<Code />} {...a11yProps(1)} />
+            <Tab label="F5" icon={<Code />} {...a11yProps(2)} />
+            <Tab label="AVI" icon={<Code />} {...a11yProps(3)} />
           </Tabs>
           
           <TabPanel value={tabValue} index={0}>
-            <InfoCard title="Standardized Configuration (MongoDB)">
-              <CodeSnippet
-                text={JSON.stringify(mongoDBConfig, null, 2)}
-                language="json"
-                showLineNumbers
-              />
-            </InfoCard>
+            <Typography variant="subtitle1" style={{ marginBottom: '8px' }}>Vendor-Agnostic Configuration</Typography>
+            <CodeSnippet
+              text={standardConfigJson}
+              language="json"
+              showLineNumbers
+              highlightedNumbers={[]}
+              customStyle={{ maxHeight: '500px', overflow: 'auto' }}
+            />
           </TabPanel>
           
           <TabPanel value={tabValue} index={1}>
-            <InfoCard title={`${lbType} Configuration Output`}>
-              <CodeSnippet
-                text={currentOutput}
-                language={lbType === 'NGINX' ? 'nginx' : 'json'}
-                showLineNumbers
-              />
-            </InfoCard>
+            <Typography variant="subtitle1" style={{ marginBottom: '8px' }}>NGINX Configuration</Typography>
+            <CodeSnippet
+              text={nginxConfig}
+              language="nginx"
+              showLineNumbers
+              highlightedNumbers={[]}
+              customStyle={{ maxHeight: '500px', overflow: 'auto' }}
+            />
+          </TabPanel>
+          
+          <TabPanel value={tabValue} index={2}>
+            <Typography variant="subtitle1" style={{ marginBottom: '8px' }}>F5 Configuration</Typography>
+            <CodeSnippet
+              text={f5Config}
+              language="bash"
+              showLineNumbers
+              highlightedNumbers={[]}
+              customStyle={{ maxHeight: '500px', overflow: 'auto' }}
+            />
+          </TabPanel>
+          
+          <TabPanel value={tabValue} index={3}>
+            <Typography variant="subtitle1" style={{ marginBottom: '8px' }}>AVI Configuration</Typography>
+            <CodeSnippet
+              text={aviConfig}
+              language="json"
+              showLineNumbers
+              highlightedNumbers={[]}
+              customStyle={{ maxHeight: '500px', overflow: 'auto' }}
+            />
           </TabPanel>
         </Paper>
       </Content>
+      
+      {/* Login Dialog */}
+      <Dialog open={isLoginDialogOpen} onClose={handleLoginDialogClose}>
+        <DialogTitle>Login to LBaaS</DialogTitle>
+        <DialogContent>
+          {loginError && (
+            <Typography color="error" style={{ marginBottom: '16px' }}>
+              {loginError}
+            </Typography>
+          )}
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Username"
+            type="text"
+            fullWidth
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+          />
+          <TextField
+            margin="dense"
+            label="Password"
+            type="password"
+            fullWidth
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleLoginDialogClose} color="primary">
+            Cancel
+          </Button>
+          <Button onClick={handleLogin} color="primary" variant="contained">
+            Login
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Page>
   );
 };
