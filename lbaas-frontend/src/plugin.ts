@@ -1,5 +1,6 @@
-import { createPlugin, createRouteRef, createSubRouteRef, createRoutableExtension } from '@backstage/core-plugin-api';
-import { createApiFactory } from '@backstage/core-plugin-api';
+import React from 'react';
+import { createPlugin, createApiFactory, identityApiRef } from '@backstage/core-plugin-api';
+import { createRouteRef, createSubRouteRef, createRoutableExtension } from '@backstage/core-plugin-api';
 import { lbaasFrontendApiRef, LbaasFrontendApiClient } from './api';
 
 // Root route reference for the plugin
@@ -38,14 +39,20 @@ export const vipPromoteRouteRef = createSubRouteRef({
   path: '/:vipId/promote',
 });
 
+export const loginRouteRef = createSubRouteRef({
+  id: 'lbaas-frontend-login',
+  parent: rootRouteRef,
+  path: '/login',
+});
+
 // Create the plugin with API factory
 export const lbaasFrontendPlugin = createPlugin({
   id: 'lbaas-frontend',
   apis: [
     createApiFactory({
       api: lbaasFrontendApiRef,
-      deps: {},
-      factory: () => new LbaasFrontendApiClient(),
+      deps: { identityApi: identityApiRef },
+      factory: ({ identityApi }) => new LbaasFrontendApiClient({ identityApi }),
     }),
   ],
   routes: {
@@ -55,6 +62,7 @@ export const lbaasFrontendPlugin = createPlugin({
     vipCreate: vipCreateRouteRef,
     vipOutput: vipOutputRouteRef,
     vipPromote: vipPromoteRouteRef,
+    login: loginRouteRef,
   },
 });
 
@@ -110,6 +118,15 @@ export const LbaasFrontendPromotePage = lbaasFrontendPlugin.provide(
     component: () =>
       import('./components/EnvironmentPromotionPage/EnvironmentPromotionPage').then(m => m.EnvironmentPromotionPage),
     mountPoint: vipPromoteRouteRef,
+  }),
+);
+
+export const LbaasFrontendLoginPage = lbaasFrontendPlugin.provide(
+  createRoutableExtension({
+    name: 'LbaasFrontendLoginPage',
+    component: () =>
+      import('./components/LoginPage/LoginPage').then(m => m.LoginPage),
+    mountPoint: loginRouteRef,
   }),
 );
 

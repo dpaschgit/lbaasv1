@@ -1,4 +1,4 @@
-import { createApiRef, DiscoveryApi } from '@backstage/core-plugin-api';
+import { createApiRef, DiscoveryApi, IdentityApi } from '@backstage/core-plugin-api';
 
 export interface Vip {
   id?: string;
@@ -37,11 +37,12 @@ export interface LbaasFrontendApi {
   logout(): Promise<void>;
   getVips(): Promise<Vip[]>;
   getVip(id: string): Promise<Vip>;
-  createVip(vip: Partial<Vip>): Promise<Vip>;
-  updateVip(id: string, vip: Partial<Vip>): Promise<Vip>;
+  createVip(vip: Partial<Vip>, incidentId?: string): Promise<Vip>;
+  updateVip(id: string, vip: Partial<Vip>, incidentId?: string): Promise<Vip>;
   deleteVip(id: string, incidentId?: string): Promise<void>;
   isAuthenticated(): boolean;
   getAuthToken(): string | null;
+  initializeAuth(): Promise<boolean>;
 }
 
 export const lbaasFrontendApiRef = createApiRef<LbaasFrontendApi>({
@@ -52,28 +53,29 @@ export class LbaasFrontendApiClient implements LbaasFrontendApi {
   private backendBaseUrl: string = 'http://localhost:8000/api/v1';
   private token: string | null = null;
   private tokenStorageKey: string = 'lbaas_auth_token';
-  private sessionStartKey: string = 'lbaas_session_start';
+  private userStorageKey: string = 'lbaas_user';
+  private identityApi?: IdentityApi;
 
-  constructor(options?: { discoveryApi?: DiscoveryApi; backendBaseUrl?: string }) {
+  constructor(options?: { 
+    discoveryApi?: DiscoveryApi; 
+    identityApi?: IdentityApi;
+    backendBaseUrl?: string 
+  }) {
     if (options?.backendBaseUrl) {
       this.backendBaseUrl = options.backendBaseUrl;
     }
     
-    // Check if this is a new browser session
-    this.checkAndInitializeSession();
+    if (options?.identityApi) {
+      this.identityApi = options?.identityApi;
+    }
+    
+    // Initialize authentication state from storage
+    this.loadAuthState();
   }
 
-  private checkAndInitializeSession(): void {
-    const currentSessionStart = sessionStorage.getItem(this.sessionStartKey);
-    const now = new Date().toISOString();
-    
-    if (!currentSessionStart) {
-      // This is a new session, clear any existing tokens
-      console.log('New browser session detected, clearing authentication state');
-      this.clearAuthState();
-      sessionStorage.setItem(this.sessionStartKey, now);
-    } else {
-      // Existing session, check if token exists
+  private loadAuthState(): void {
+    try {
+      // Check for stored token
       const storedToken = localStorage.getItem(this.tokenStorageKey);
       if (storedToken) {
         console.log('Existing token found in localStorage');
@@ -82,6 +84,9 @@ export class LbaasFrontendApiClient implements LbaasFrontendApi {
         console.log('No token found in localStorage');
         this.token = null;
       }
+    } catch (e) {
+      console.error('Error loading auth state:', e);
+      this.clearAuthState();
     }
   }
 
@@ -89,6 +94,41 @@ export class LbaasFrontendApiClient implements LbaasFrontendApi {
     console.log('Clearing authentication state');
     this.token = null;
     localStorage.removeItem(this.tokenStorageKey);
+    localStorage.removeItem(this.userStorageKey);
+  }
+
+  async initializeAuth(): Promise<boolean> {
+    // If we already have a token, consider auth initialized
+    if (this.token) {
+      return true;
+    }
+
+    // If we have identityApi, try to use it for authentication
+    if (this.identityApi) {
+      try {
+        const identity = await this.identityApi.getCredentials();
+        
+        // If we have a token from identity API, use it
+        if (identity && identity.token) {
+          console.log('Using token from Backstage identity API');
+          
+          // Store the token
+          this.token = identity.token;
+          localStorage.setItem(this.tokenStorageKey, identity.token);
+          
+          // Store user info if available
+          if (identity.userEntityRef) {
+            localStorage.setItem(this.userStorageKey, identity.userEntityRef);
+          }
+          
+          return true;
+        }
+      } catch (e) {
+        console.error('Error getting credentials from identity API:', e);
+      }
+    }
+    
+    return false;
   }
 
   async getHealth(): Promise<{ status: string }> {
@@ -141,6 +181,7 @@ export class LbaasFrontendApiClient implements LbaasFrontendApi {
       // Store token in memory and localStorage
       this.token = data.access_token;
       localStorage.setItem(this.tokenStorageKey, data.access_token);
+      localStorage.setItem(this.userStorageKey, username);
       
       return data;
     } catch (error) {
@@ -163,9 +204,13 @@ export class LbaasFrontendApiClient implements LbaasFrontendApi {
   }
 
   private async fetchWithAuth(url: string, options: RequestInit = {}): Promise<Response> {
-    if (!this.token) {
-      console.error('No authentication token available');
-      throw new Error('Authentication required. Please login.');
+    // Try to initialize auth if not authenticated
+    if (!this.isAuthenticated()) {
+      const initialized = await this.initializeAuth();
+      if (!initialized) {
+        console.error('No authentication token available');
+        throw new Error('Authentication required. Please login.');
+      }
     }
     
     const headers = {
@@ -225,10 +270,15 @@ export class LbaasFrontendApiClient implements LbaasFrontendApi {
     return data;
   }
 
-  async createVip(vip: Partial<Vip>): Promise<Vip> {
+  async createVip(vip: Partial<Vip>, incidentId?: string): Promise<Vip> {
     console.log('Creating new VIP:', vip);
     
-    const response = await this.fetchWithAuth(`${this.backendBaseUrl}/vips`, {
+    let url = `${this.backendBaseUrl}/vips`;
+    if (incidentId) {
+      url += `?incident_id=${encodeURIComponent(incidentId)}`;
+    }
+    
+    const response = await this.fetchWithAuth(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -253,10 +303,15 @@ export class LbaasFrontendApiClient implements LbaasFrontendApi {
     return data;
   }
 
-  async updateVip(id: string, vip: Partial<Vip>): Promise<Vip> {
+  async updateVip(id: string, vip: Partial<Vip>, incidentId?: string): Promise<Vip> {
     console.log(`Updating VIP with ID: ${id}`, vip);
     
-    const response = await this.fetchWithAuth(`${this.backendBaseUrl}/vips/${id}`, {
+    let url = `${this.backendBaseUrl}/vips/${id}`;
+    if (incidentId) {
+      url += `?incident_id=${encodeURIComponent(incidentId)}`;
+    }
+    
+    const response = await this.fetchWithAuth(url, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',

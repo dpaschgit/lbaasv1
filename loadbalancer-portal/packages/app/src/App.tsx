@@ -35,6 +35,7 @@ import { AppRouter, FlatRoutes } from '@backstage/core-app-api';
 import { CatalogGraphPage } from '@backstage/plugin-catalog-graph';
 import { RequirePermission } from '@backstage/plugin-permission-react';
 import { catalogEntityCreatePermission } from '@backstage/plugin-catalog-common/alpha';
+import { LbaasFrontendPage, LbaasFrontendViewPage, LbaasFrontendEditPage, LbaasFrontendCreatePage, LbaasFrontendLoginPage } from '@internal/plugin-lbaas-frontend';
 
 const app = createApp({
   apis,
@@ -94,6 +95,11 @@ const routes = (
     </Route>
     <Route path="/settings" element={<UserSettingsPage />} />
     <Route path="/catalog-graph" element={<CatalogGraphPage />} />
+    <Route path="/lbaas-frontend" element={<LbaasFrontendPage />} />
+    <Route path="/lbaas-frontend/:vipId/view" element={<LbaasFrontendViewPage />} />
+    <Route path="/lbaas-frontend/:vipId/edit" element={<LbaasFrontendEditPage />} />
+    <Route path="/lbaas-frontend/create" element={<LbaasFrontendCreatePage />} />
+    <Route path="/lbaas-frontend/login" element={<LbaasFrontendLoginPage />} />
   </FlatRoutes>
 );
 

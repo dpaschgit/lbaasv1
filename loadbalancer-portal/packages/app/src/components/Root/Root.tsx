@@ -67,6 +67,7 @@ export const Root = ({ children }: PropsWithChildren<{}>) => (
       <SidebarGroup label="Menu" icon={<MenuIcon />}>
         {/* Global nav, not org-specific */}
         <SidebarItem icon={HomeIcon} to="catalog" text="Home" />
+        <SidebarItem icon={BalanceIcon} to="lbaas-frontend" text="Load Balancers" />
         <MyGroupsSidebarItem
           singularTitle="My Group"
           pluralTitle="My Groups"

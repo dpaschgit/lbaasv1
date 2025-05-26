@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { Typography, Button, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Tooltip } from '@material-ui/core';
-import { Link as RouterLink } from 'react-router-dom';
-import { Add, Visibility, Edit, Delete } from '@material-ui/icons';
-import { Table, TableColumn } from '@backstage/core-components';
-import { useApi, alertApiRef, identityApiRef } from '@backstage/core-plugin-api';
+import { Link as RouterLink, useNavigate } from 'react-router-dom';
+import { Add, Visibility, Edit, Delete, LockOpen } from '@material-ui/icons';
+import { Table, TableColumn, InfoCard } from '@backstage/core-components';
+import { useApi, alertApiRef } from '@backstage/core-plugin-api';
 import { CircularProgress } from '@material-ui/core';
 import { StatusOK, StatusError, StatusPending, StatusAborted, StatusRunning } from '@backstage/core-components';
+import { lbaasFrontendApiRef, Vip } from '../../api';
+import { LoginPage } from '../LoginPage/LoginPage';
 
-// Define the VIP data structure
+// Define the VIP data structure for the table
 interface VipRowData {
   id: string;
   vip_fqdn: string;
@@ -20,60 +22,6 @@ interface VipRowData {
   owner: string;
   status: string;
 }
-
-// Mock API call to fetch VIPs
-const mockFetchVips = async (authToken: string): Promise<VipRowData[]> => {
-  console.log(`Fetching VIPs with token: ${authToken ? 'Token Present' : 'No Token'}`);
-  await new Promise(resolve => setTimeout(resolve, 700));
-  return [
-    {
-      id: '65f1c3b3e4b0f8a7b0a3b3e1',
-      vip_fqdn: 'app1.prod.ladc.davelab.net',
-      vip_ip: '10.1.1.101',
-      port: 443,
-      protocol: 'HTTPS',
-      environment: 'PROD',
-      datacenter: 'LADC',
-      app_id: 'APP001',
-      owner: 'team-a',
-      status: 'active',
-    },
-    {
-      id: '65f1c3b3e4b0f8a7b0a3b3e2',
-      vip_fqdn: 'app2.dev.nydc.davelab.net',
-      vip_ip: '10.2.1.102',
-      port: 80,
-      protocol: 'HTTP',
-      environment: 'DEV',
-      datacenter: 'NYDC',
-      app_id: 'APP002',
-      owner: 'team-b',
-      status: 'pending',
-    },
-    {
-      id: '65f1c3b3e4b0f8a7b0a3b3e3',
-      vip_fqdn: 'app3.uat.ukdc.davelab.net',
-      vip_ip: '10.3.1.103',
-      port: 8443,
-      protocol: 'HTTPS',
-      environment: 'UAT',
-      datacenter: 'UKDC',
-      app_id: 'APP003',
-      owner: 'team-c',
-      status: 'error',
-    },
-  ];
-};
-
-// Mock API call to delete a VIP
-const mockDeleteVip = async (vipId: string, incidentId: string, authToken: string): Promise<{ success: boolean; message: string }> => {
-  console.log(`Deleting VIP: ${vipId} with incident ID: ${incidentId} and token: ${authToken ? 'Token Present' : 'No Token'}`);
-  await new Promise(resolve => setTimeout(resolve, 700));
-  if (!incidentId) {
-    return { success: false, message: 'Incident ID is required for deletion.' };
-  }
-  return { success: true, message: `VIP ${vipId} deleted successfully.` };
-};
 
 // Helper function to render status component
 const getStatusComponent = (status: string | undefined) => {
@@ -101,31 +49,63 @@ const getStatusComponent = (status: string | undefined) => {
 // VIP List Page Component
 export const VipListPage = () => {
   const alertApi = useApi(alertApiRef);
-  const identityApi = useApi(identityApiRef);
+  const lbaasApi = useApi(lbaasFrontendApiRef);
+  const navigate = useNavigate();
+  
   const [vips, setVips] = useState<VipRowData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [selectedVipId, setSelectedVipId] = useState<string | null>(null);
   const [incidentId, setIncidentId] = useState('');
+  const [isLoginDialogOpen, setIsLoginDialogOpen] = useState(false);
 
   useEffect(() => {
-    const fetchVips = async () => {
+    const initializeAndFetchVips = async () => {
       try {
         setLoading(true);
-        const token = await identityApi.getCredentials();
-        const data = await mockFetchVips(token?.token || '');
-        setVips(data);
+        
+        // Try to initialize authentication
+        await lbaasApi.initializeAuth();
+        
+        // If authenticated, fetch VIPs
+        if (lbaasApi.isAuthenticated()) {
+          await fetchVips();
+        } else {
+          // Not authenticated, show login dialog
+          setIsLoginDialogOpen(true);
+          setLoading(false);
+        }
       } catch (e: any) {
         setError(e);
-        alertApi.post({ message: `Error fetching VIPs: ${e.message}`, severity: 'error' });
-      } finally {
+        alertApi.post({ message: `Error: ${e.message}`, severity: 'error' });
         setLoading(false);
       }
     };
 
-    fetchVips();
-  }, [alertApi, identityApi]);
+    initializeAndFetchVips();
+  }, [alertApi, lbaasApi]);
+
+  const fetchVips = async () => {
+    try {
+      setLoading(true);
+      
+      // Use the real API client to fetch VIPs
+      const data = await lbaasApi.getVips();
+      setVips(data as VipRowData[]);
+      setError(null);
+    } catch (e: any) {
+      setError(e);
+      alertApi.post({ message: `Error fetching VIPs: ${e.message}`, severity: 'error' });
+      
+      // If authentication error, show login dialog
+      if (e.message.includes('Authentication') || e.message.includes('login')) {
+        setIsLoginDialogOpen(true);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleDeleteClick = (vipId: string) => {
     setSelectedVipId(vipId);
@@ -144,28 +124,103 @@ export const VipListPage = () => {
       alertApi.post({ message: 'Incident ID is required for deletion.', severity: 'error' });
       return;
     }
+    
     try {
-      const token = await identityApi.getCredentials();
-      const result = await mockDeleteVip(selectedVipId, incidentId, token?.token || '');
-      if (result.success) {
-        alertApi.post({ message: result.message, severity: 'success' });
-        // Refresh VIP list
-        setVips(vips.filter(vip => vip.id !== selectedVipId));
-      } else {
-        alertApi.post({ message: result.message, severity: 'error' });
-      }
+      // Use the real API client to delete VIP
+      await lbaasApi.deleteVip(selectedVipId, incidentId);
+      
+      // Show success message
+      alertApi.post({ message: `VIP ${selectedVipId} deleted successfully.`, severity: 'success' });
+      
+      // Refresh VIP list by removing the deleted VIP from state
+      setVips(vips.filter(vip => vip.id !== selectedVipId));
     } catch (e: any) {
       alertApi.post({ message: `Error deleting VIP: ${e.message}`, severity: 'error' });
+      
+      // If authentication error, show login dialog
+      if (e.message.includes('Authentication') || e.message.includes('login')) {
+        setIsLoginDialogOpen(true);
+      }
     }
+    
     handleCloseDeleteDialog();
+  };
+
+  const handleLoginSuccess = () => {
+    setIsLoginDialogOpen(false);
+    fetchVips();
+  };
+
+  const handleLoginDialogClose = () => {
+    setIsLoginDialogOpen(false);
+    
+    // If not authenticated, redirect to login page
+    if (!lbaasApi.isAuthenticated()) {
+      navigate('/lbaas-frontend/login');
+    }
   };
 
   if (loading) {
     return <CircularProgress />;
   }
 
-  if (error) {
-    return <Typography color="error">Error loading VIPs: {error.message}</Typography>;
+  if (!lbaasApi.isAuthenticated() && !isLoginDialogOpen) {
+    return (
+      <div>
+        <InfoCard title="Authentication Required">
+          <Typography variant="body1" style={{ marginBottom: '16px' }}>
+            You need to be authenticated to view and manage VIPs.
+          </Typography>
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={() => setIsLoginDialogOpen(true)}
+            startIcon={<LockOpen />}
+          >
+            Login
+          </Button>
+        </InfoCard>
+        
+        <Dialog open={isLoginDialogOpen} onClose={handleLoginDialogClose} maxWidth="sm" fullWidth>
+          <DialogTitle>Login to LBaaS</DialogTitle>
+          <DialogContent>
+            <LoginPage onLoginSuccess={handleLoginSuccess} />
+          </DialogContent>
+        </Dialog>
+      </div>
+    );
+  }
+
+  if (error && !isLoginDialogOpen) {
+    return (
+      <div>
+        <Typography color="error">Error loading VIPs: {error.message}</Typography>
+        <Button 
+          variant="contained" 
+          color="primary" 
+          onClick={fetchVips}
+          style={{ marginTop: '16px', marginRight: '8px' }}
+        >
+          Retry
+        </Button>
+        <Button
+          variant="outlined"
+          color="primary"
+          onClick={() => setIsLoginDialogOpen(true)}
+          startIcon={<LockOpen />}
+          style={{ marginTop: '16px' }}
+        >
+          Login
+        </Button>
+        
+        <Dialog open={isLoginDialogOpen} onClose={handleLoginDialogClose} maxWidth="sm" fullWidth>
+          <DialogTitle>Login to LBaaS</DialogTitle>
+          <DialogContent>
+            <LoginPage onLoginSuccess={handleLoginSuccess} />
+          </DialogContent>
+        </Dialog>
+      </div>
+    );
   }
 
   const columns: TableColumn<VipRowData>[] = [
@@ -183,7 +238,6 @@ export const VipListPage = () => {
       render: (rowData: VipRowData) => (
         <>
           <Tooltip title="View Details">
-            {/* FIXED: Use consistent route pattern with /view suffix */}
             <IconButton component={RouterLink} to={`/lbaas-frontend/${rowData.id}/view`}>
               <Visibility />
             </IconButton>
@@ -207,15 +261,34 @@ export const VipListPage = () => {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
         <Typography variant="h4">Load Balancer VIPs</Typography>
-        <Button
-          component={RouterLink}
-          to="/lbaas-frontend/create"
-          variant="contained"
-          color="primary"
-          startIcon={<Add />}
-        >
-          Create VIP
-        </Button>
+        <div>
+          <Button
+            variant="outlined"
+            color="primary"
+            onClick={fetchVips}
+            style={{ marginRight: '8px' }}
+          >
+            Refresh
+          </Button>
+          <Button
+            variant="outlined"
+            color="primary"
+            onClick={() => setIsLoginDialogOpen(true)}
+            startIcon={<LockOpen />}
+            style={{ marginRight: '8px' }}
+          >
+            {lbaasApi.isAuthenticated() ? 'Switch User' : 'Login'}
+          </Button>
+          <Button
+            component={RouterLink}
+            to="/lbaas-frontend/create"
+            variant="contained"
+            color="primary"
+            startIcon={<Add />}
+          >
+            Create VIP
+          </Button>
+        </div>
       </div>
 
       <Table
@@ -251,6 +324,13 @@ export const VipListPage = () => {
             Delete
           </Button>
         </DialogActions>
+      </Dialog>
+      
+      <Dialog open={isLoginDialogOpen} onClose={handleLoginDialogClose} maxWidth="sm" fullWidth>
+        <DialogTitle>Login to LBaaS</DialogTitle>
+        <DialogContent>
+          <LoginPage onLoginSuccess={handleLoginSuccess} />
+        </DialogContent>
       </Dialog>
     </div>
   );
