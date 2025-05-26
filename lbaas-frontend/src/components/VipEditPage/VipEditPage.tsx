@@ -1,23 +1,27 @@
 import React, { useEffect, useState } from 'react';
-import { Typography, Grid, Button, CircularProgress, Paper, Divider, TextField, MenuItem, FormControl, InputLabel, Select, FormHelperText, Dialog, DialogTitle, DialogContent, DialogActions } from '@material-ui/core';
-import { ArrowBack, Save, LockOpen } from '@material-ui/icons';
+import { Typography, Grid, Button, CircularProgress, Paper, Divider, List, ListItem, ListItemText, Dialog, DialogTitle, DialogContent, DialogActions, TextField } from '@material-ui/core';
+import { Link as RouterLink, useParams, useNavigate, useLocation } from 'react-router-dom';
+import { ArrowBack, Edit, LockOpen } from '@material-ui/icons';
 import {
   Header,
   Page,
   Content,
   ContentHeader,
   SupportButton,
+  StatusOK,
+  StatusError,
+  StatusPending,
+  StatusAborted,
+  StatusRunning,
   InfoCard,
   ErrorPanel
 } from '@backstage/core-components';
 import { useApi, alertApiRef } from '@backstage/core-plugin-api';
 import { lbaasFrontendApiRef } from '../../api';
-import { Link as RouterLink, useParams, useNavigate, useLocation } from 'react-router-dom';
 
-
-// Interface for VIP data
-interface VipData {
-  id?: string;
+// Interface for VIP details data
+interface VipDetailsData {
+  id: string;
   vip_fqdn: string;
   vip_ip: string;
   port: number;
@@ -25,76 +29,96 @@ interface VipData {
   environment: string;
   datacenter: string;
   app_id: string;
-  owner?: string;
-  status?: string;
-  pool_members?: Array<{ server_name: string; server_ip: string; server_port: number; weight: number; status?: string }>;
+  owner: string;
+  status: string;
+  created_at?: string;
+  updated_at?: string;
+  pool_members?: Array<{ ip: string; port: number; enabled: boolean; status?: string }>;
   monitor?: { type: string; port?: number; send_string?: string; receive_string?: string; interval?: number; timeout?: number };
   persistence?: { type: string; timeout?: number };
 }
 
-// Interface for form validation
-interface FormErrors {
-  vip_fqdn?: string;
-  vip_ip?: string;
-  port?: string;
-  protocol?: string;
-  environment?: string;
-  datacenter?: string;
-  app_id?: string;
-}
+// Mock data for when not authenticated or API fails
+const mockVipDetails: VipDetailsData = {
+  id: 'mock-vip-1',
+  vip_fqdn: 'app1.example.com',
+  vip_ip: '192.168.1.10',
+  port: 80,
+  protocol: 'HTTP',
+  environment: 'Development',
+  datacenter: 'DevDC1',
+  app_id: 'APP001',
+  owner: 'John Doe',
+  status: 'active',
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+  pool_members: [
+    { ip: '192.168.2.10', port: 8080, enabled: true, status: 'active' },
+    { ip: '192.168.2.11', port: 8080, enabled: true, status: 'active' }
+  ],
+  monitor: {
+    type: 'HTTP',
+    port: 8080,
+    send_string: 'GET /health HTTP/1.1\r\nHost: example.com\r\n\r\n',
+    receive_string: '200 OK',
+    interval: 5,
+    timeout: 16
+  },
+  persistence: {
+    type: 'cookie',
+    timeout: 3600
+  }
+};
 
-export const VipEditPage = () => {
-  // Extract vipId from URL parameters using robust approach
+// Added null/undefined check to prevent crashes
+const getStatusComponent = (status: string | undefined) => {
+  // Add null check to prevent errors when status is undefined
+  if (!status) {
+    return <Typography variant="body2">Unknown</Typography>;
+  }
+  
+  switch (status.toLowerCase()) {
+    case 'active':
+      return <StatusOK>{status}</StatusOK>;
+    case 'building':
+      return <StatusRunning>{status}</StatusRunning>;
+    case 'pending':
+      return <StatusPending>{status}</StatusPending>;
+    case 'error':
+      return <StatusError>{status}</StatusError>;
+    case 'inactive':
+      return <StatusAborted>{status}</StatusAborted>;
+    default:
+      return <Typography variant="body2">{status}</Typography>;
+  }
+};
+
+export const VipViewPage = () => {
+  // All hooks must be called at the top level of the component
   const params = useParams<{ vipId?: string }>();
   const location = useLocation();
-  const pathSegments = location.pathname.split('/');
-  
-  // Extract vipId from either params or URL path
-  const vipId = params.vipId || 
-                (pathSegments.length > 2 ? pathSegments[pathSegments.length - 2] : undefined);
-  
-  console.log('Path segments:', pathSegments);
-  console.log('Extracted vipId:', vipId);
-  
   const alertApi = useApi(alertApiRef);
   const lbaasApi = useApi(lbaasFrontendApiRef);
   const navigate = useNavigate();
   
-  // Form state
-  const [formData, setFormData] = useState<VipData>({
-    vip_fqdn: '',
-    vip_ip: '',
-    port: 80,
-    protocol: 'HTTP',
-    environment: '',
-    datacenter: '',
-    app_id: '',
-  });
-  
-  // UI state
+  // State hooks
+  const [vipDetails, setVipDetails] = useState<VipDetailsData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [isLoginDialogOpen, setIsLoginDialogOpen] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [usingCachedData, setUsingCachedData] = useState(false);
+  const [usingMockData, setUsingMockData] = useState(false);
   
-  // Environment options
-  const environments = ['Development', 'Testing', 'Staging', 'Production'];
+  // Extract parameters after all hooks are declared
+  const pathSegments = location.pathname.split('/');
+  const vipId = params.vipId || 
+                (pathSegments.length > 2 ? pathSegments[pathSegments.length - 2] : undefined);
   
-  // Datacenter options based on environment
-  const datacenters: Record<string, string[]> = {
-    Development: ['DevDC1', 'DevDC2'],
-    Testing: ['TestDC1', 'TestDC2'],
-    Staging: ['StageDC1', 'StageDC2'],
-    Production: ['ProdDC1', 'ProdDC2', 'ProdDC3'],
-  };
-  
-  // Protocol options
-  const protocols = ['HTTP', 'HTTPS', 'TCP', 'UDP'];
+  console.log('Path segments:', pathSegments);
+  console.log('Extracted vipId:', vipId);
 
   // Handle login dialog
   const handleLoginDialogOpen = () => {
@@ -120,10 +144,10 @@ export const VipEditPage = () => {
     }
   };
 
-  // Fetch VIP details
   const fetchVipDetails = async () => {
     if (!vipId) {
-      setError(new Error('VIP ID not found in URL.'));
+      console.error('VIP ID not found in URL. Path segments:', pathSegments);
+      setError(new Error('VIP ID not found in URL. Please check the URL format.'));
       setLoading(false);
       return;
     }
@@ -136,10 +160,10 @@ export const VipEditPage = () => {
       if (cachedData) {
         try {
           const parsedData = JSON.parse(cachedData);
-          setFormData(parsedData);
+          setVipDetails(parsedData);
           setUsingCachedData(true);
-          console.log('Using cached VIP data from sessionStorage');
-          setLoading(false);
+          setUsingMockData(false);
+          console.log('Using cached VIP data from sessionStorage for ID:', vipId);
           // Continue fetching fresh data in the background
         } catch (parseError) {
           console.error('Error parsing cached VIP data:', parseError);
@@ -149,9 +173,15 @@ export const VipEditPage = () => {
       
       // Check if authenticated
       if (!lbaasApi.isAuthenticated()) {
-        console.log('Not authenticated, using cached data if available');
+        console.log('Not authenticated, using mock or cached data for ID:', vipId);
         if (!cachedData) {
-          setError(new Error('Authentication required to fetch VIP details.'));
+          // Use mock data if no cached data available
+          setVipDetails({
+            ...mockVipDetails,
+            id: vipId // Ensure the mock data uses the correct ID
+          });
+          setUsingMockData(true);
+          setUsingCachedData(false);
         }
         setLoading(false);
         return;
@@ -159,163 +189,82 @@ export const VipEditPage = () => {
       
       try {
         // Use the API client to fetch VIP details
+        console.log('Calling API to get VIP with ID:', vipId);
         const data = await lbaasApi.getVip(vipId);
         
         if (data) {
-          setFormData(data);
+          console.log('Successfully retrieved VIP data:', data);
+          // Ensure VIP has a status property to prevent errors
+          const safeData = {
+            ...data,
+            status: data.status || 'Unknown'
+          };
+          setVipDetails(safeData);
           setUsingCachedData(false);
+          setUsingMockData(false);
           
           // Cache the data in sessionStorage for future use
           try {
-            sessionStorage.setItem(`vip_${vipId}`, JSON.stringify(data));
+            sessionStorage.setItem(`vip_${vipId}`, JSON.stringify(safeData));
           } catch (storageError) {
             console.error('Error caching VIP data:', storageError);
             // Non-critical error, continue without caching
           }
         } else {
+          console.warn('API returned no data for VIP ID:', vipId);
           // If no data returned but no error thrown, check if we already have cached data
           if (!cachedData) {
+            // Use mock data if no cached data available
+            setVipDetails({
+              ...mockVipDetails,
+              id: vipId // Ensure the mock data uses the correct ID
+            });
+            setUsingMockData(true);
+            setUsingCachedData(false);
             setError(new Error(`VIP with ID ${vipId} not found.`));
-            alertApi.post({ message: `VIP with ID ${vipId} not found.`, severity: 'error' });
+            alertApi.post({ message: `VIP with ID ${vipId} not found.`, severity: 'warning' });
           }
         }
       } catch (apiError: any) {
-        console.error('API call failed:', apiError);
+        console.error('API call failed for VIP ID:', vipId, apiError);
         
-        // If we don't have cached data, show the error
+        // If we don't have cached data, use mock data
         if (!cachedData) {
+          setVipDetails({
+            ...mockVipDetails,
+            id: vipId // Ensure the mock data uses the correct ID
+          });
+          setUsingMockData(true);
+          setUsingCachedData(false);
           setError(apiError);
           alertApi.post({ message: `Error fetching VIP details: ${apiError.message}`, severity: 'error' });
         }
         // Otherwise, we'll continue using the cached data
       }
     } catch (e: any) {
+      console.error('General error in fetchVipDetails for ID:', vipId, e);
       setError(e);
       alertApi.post({ message: `Error fetching VIP details: ${e.message}`, severity: 'error' });
+      
+      // Use mock data if no cached data available
+      if (!vipDetails) {
+        setVipDetails({
+          ...mockVipDetails,
+          id: vipId // Ensure the mock data uses the correct ID
+        });
+        setUsingMockData(true);
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  // Load VIP details on component mount
+  // Effect hook must be called at the top level after all other hooks
   useEffect(() => {
     fetchVipDetails();
   }, [vipId, alertApi, lbaasApi]);
 
-  // Handle form field changes
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | { name?: string; value: unknown }>) => {
-    const { name, value } = e.target;
-    if (!name) return;
-    
-    setFormData(prev => ({
-      ...prev,
-      [name]: value,
-    }));
-    
-    // Clear validation error when field is changed
-    if (formErrors[name as keyof FormErrors]) {
-      setFormErrors(prev => ({
-        ...prev,
-        [name]: undefined,
-      }));
-    }
-    
-    // Reset datacenter if environment changes
-    if (name === 'environment') {
-      setFormData(prev => ({
-        ...prev,
-        datacenter: '',
-      }));
-    }
-  };
-
-  // Validate form
-  const validateForm = (): boolean => {
-    const errors: FormErrors = {};
-    
-    if (!formData.vip_fqdn) {
-      errors.vip_fqdn = 'FQDN is required';
-    } else if (!/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(formData.vip_fqdn)) {
-      errors.vip_fqdn = 'Invalid FQDN format';
-    }
-    
-    if (!formData.vip_ip) {
-      errors.vip_ip = 'IP Address is required';
-    } else if (!/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(formData.vip_ip)) {
-      errors.vip_ip = 'Invalid IP address format';
-    }
-    
-    if (!formData.port) {
-      errors.port = 'Port is required';
-    } else if (formData.port < 1 || formData.port > 65535) {
-      errors.port = 'Port must be between 1 and 65535';
-    }
-    
-    if (!formData.protocol) {
-      errors.protocol = 'Protocol is required';
-    }
-    
-    if (!formData.environment) {
-      errors.environment = 'Environment is required';
-    }
-    
-    if (!formData.datacenter) {
-      errors.datacenter = 'Datacenter is required';
-    }
-    
-    if (!formData.app_id) {
-      errors.app_id = 'Application ID is required';
-    }
-    
-    setFormErrors(errors);
-    return Object.keys(errors).length === 0;
-  };
-
-  // Handle form submission
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!lbaasApi.isAuthenticated()) {
-      alertApi.post({ message: 'Authentication required to update VIP.', severity: 'error' });
-      handleLoginDialogOpen();
-      return;
-    }
-    
-    if (!validateForm()) {
-      alertApi.post({ message: 'Please fix the errors in the form.', severity: 'error' });
-      return;
-    }
-    
-    try {
-      setSaving(true);
-      
-      if (!vipId) {
-        throw new Error('VIP ID not found in URL.');
-      }
-      
-      const updatedVip = await lbaasApi.updateVip(vipId, formData);
-      
-      alertApi.post({ message: 'VIP updated successfully!', severity: 'success' });
-      
-      // Update cache
-      try {
-        sessionStorage.setItem(`vip_${vipId}`, JSON.stringify(updatedVip));
-      } catch (storageError) {
-        console.error('Error updating cached VIP data:', storageError);
-      }
-      
-      // Navigate back to VIP details page
-      navigate(`/lbaas-frontend/${vipId}/view`);
-    } catch (error: any) {
-      console.error('Error updating VIP:', error);
-      alertApi.post({ message: `Error updating VIP: ${error.message}`, severity: 'error' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // Show loading state
-  if (loading && !formData.vip_fqdn) {
+  if (loading && !vipDetails) {
     return (
       <Page themeId="tool">
         <Header title="Loading VIP Details" />
@@ -328,8 +277,7 @@ export const VipEditPage = () => {
     );
   }
 
-  // Show error state if no cached data
-  if (error && !formData.vip_fqdn) {
+  if (error && !vipDetails) {
     return (
       <Page themeId="tool">
         <Header title="Error" />
@@ -396,13 +344,37 @@ export const VipEditPage = () => {
     );
   }
 
+  if (!vipDetails) {
+    return (
+      <Page themeId="tool">
+        <Header title="VIP Not Found" />
+        <Content>
+          <Typography>The requested VIP could not be found.</Typography>
+          <Button component={RouterLink} to="/lbaas-frontend" variant="outlined" style={{ marginTop: '20px' }}>
+            Back to VIP List
+          </Button>
+        </Content>
+      </Page>
+    );
+  }
+
   return (
     <Page themeId="tool">
       <Header 
-        title={`Edit VIP: ${formData.vip_fqdn}`}
-        subtitle={`Application ID: ${formData.app_id}`}>
+        title={`VIP Details: ${vipDetails.vip_fqdn}`}
+        subtitle={`Application ID: ${vipDetails.app_id}`}>
         <Button component={RouterLink} to="/lbaas-frontend" variant="outlined" startIcon={<ArrowBack />}>
           Back to VIP List
+        </Button>
+        <Button 
+          component={RouterLink} 
+          to={`/lbaas-frontend/${vipId}/edit`} 
+          variant="contained" 
+          color="primary" 
+          startIcon={<Edit />} 
+          style={{ marginLeft: '10px' }}
+        >
+          Modify VIP
         </Button>
         {!lbaasApi.isAuthenticated() && (
           <Button 
@@ -417,15 +389,15 @@ export const VipEditPage = () => {
         )}
       </Header>
       <Content>
-        <ContentHeader title="Edit VIP Configuration">
-          <SupportButton>Edit the configuration for this VIP.</SupportButton>
+        <ContentHeader title="VIP Configuration">
+          <SupportButton>Detailed information for the selected VIP.</SupportButton>
         </ContentHeader>
         
         {/* Authentication Warning */}
         {!lbaasApi.isAuthenticated() && (
           <InfoCard title="Authentication Required" severity="warning" style={{ marginBottom: '20px' }}>
             <Typography variant="body1">
-              You are viewing cached data. Please log in to fetch the latest VIP details and make changes.
+              You are viewing {usingCachedData ? 'cached' : 'mock'} data. Please log in to fetch the latest VIP details and make changes.
             </Typography>
             <Button 
               variant="contained" 
@@ -435,6 +407,23 @@ export const VipEditPage = () => {
               style={{ marginTop: '10px' }}
             >
               Login
+            </Button>
+          </InfoCard>
+        )}
+        
+        {/* Mock Data Warning */}
+        {usingMockData && (
+          <InfoCard title="Using Mock Data" severity="info" style={{ marginBottom: '20px' }}>
+            <Typography variant="body1">
+              Showing mock data. The actual VIP details could not be fetched from the server.
+            </Typography>
+            <Button 
+              variant="outlined" 
+              color="primary" 
+              onClick={fetchVipDetails}
+              style={{ marginTop: '10px' }}
+            >
+              Retry
             </Button>
           </InfoCard>
         )}
@@ -457,7 +446,7 @@ export const VipEditPage = () => {
         )}
         
         {/* Error Warning */}
-        {error && formData.vip_fqdn && (
+        {error && vipDetails && !usingMockData && (
           <InfoCard title="Warning" severity="error" style={{ marginBottom: '20px' }}>
             <Typography variant="body1">
               Error fetching latest data: {error.message}
@@ -474,148 +463,108 @@ export const VipEditPage = () => {
         )}
         
         <Paper style={{ padding: '20px' }}>
-          <form onSubmit={handleSubmit}>
-            <Grid container spacing={3}>
-              {/* Basic Information */}
-              <Grid item xs={12}>
-                <Typography variant="h6">Basic Information</Typography>
-                <Divider style={{ marginTop: '8px', marginBottom: '16px' }} />
-              </Grid>
-              
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  label="FQDN"
-                  name="vip_fqdn"
-                  value={formData.vip_fqdn}
-                  onChange={handleChange}
-                  fullWidth
-                  required
-                  error={!!formErrors.vip_fqdn}
-                  helperText={formErrors.vip_fqdn}
-                />
-              </Grid>
-              
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  label="IP Address"
-                  name="vip_ip"
-                  value={formData.vip_ip}
-                  onChange={handleChange}
-                  fullWidth
-                  required
-                  error={!!formErrors.vip_ip}
-                  helperText={formErrors.vip_ip}
-                />
-              </Grid>
-              
-              <Grid item xs={12} sm={4}>
-                <TextField
-                  label="Port"
-                  name="port"
-                  type="number"
-                  value={formData.port}
-                  onChange={handleChange}
-                  fullWidth
-                  required
-                  inputProps={{ min: 1, max: 65535 }}
-                  error={!!formErrors.port}
-                  helperText={formErrors.port}
-                />
-              </Grid>
-              
-              <Grid item xs={12} sm={4}>
-                <FormControl fullWidth required error={!!formErrors.protocol}>
-                  <InputLabel id="protocol-label">Protocol</InputLabel>
-                  <Select
-                    labelId="protocol-label"
-                    name="protocol"
-                    value={formData.protocol}
-                    onChange={handleChange}
-                  >
-                    {protocols.map((protocol) => (
-                      <MenuItem key={protocol} value={protocol}>
-                        {protocol}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                  {formErrors.protocol && <FormHelperText>{formErrors.protocol}</FormHelperText>}
-                </FormControl>
-              </Grid>
-              
-              <Grid item xs={12} sm={4}>
-                <TextField
-                  label="Application ID"
-                  name="app_id"
-                  value={formData.app_id}
-                  onChange={handleChange}
-                  fullWidth
-                  required
-                  error={!!formErrors.app_id}
-                  helperText={formErrors.app_id}
-                />
-              </Grid>
-              
-              <Grid item xs={12} sm={6}>
-                <FormControl fullWidth required error={!!formErrors.environment}>
-                  <InputLabel id="environment-label">Environment</InputLabel>
-                  <Select
-                    labelId="environment-label"
-                    name="environment"
-                    value={formData.environment}
-                    onChange={handleChange}
-                  >
-                    {environments.map((env) => (
-                      <MenuItem key={env} value={env}>
-                        {env}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                  {formErrors.environment && <FormHelperText>{formErrors.environment}</FormHelperText>}
-                </FormControl>
-              </Grid>
-              
-              <Grid item xs={12} sm={6}>
-                <FormControl fullWidth required error={!!formErrors.datacenter} disabled={!formData.environment}>
-                  <InputLabel id="datacenter-label">Datacenter</InputLabel>
-                  <Select
-                    labelId="datacenter-label"
-                    name="datacenter"
-                    value={formData.datacenter}
-                    onChange={handleChange}
-                  >
-                    {formData.environment && datacenters[formData.environment]?.map((dc) => (
-                      <MenuItem key={dc} value={dc}>
-                        {dc}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                  {formErrors.datacenter && <FormHelperText>{formErrors.datacenter}</FormHelperText>}
-                </FormControl>
-              </Grid>
-              
-              {/* Submit Button */}
-              <Grid item xs={12} style={{ marginTop: '20px' }}>
-                <Button
-                  type="submit"
-                  variant="contained"
-                  color="primary"
-                  startIcon={<Save />}
-                  disabled={saving || !lbaasApi.isAuthenticated()}
-                >
-                  {saving ? <CircularProgress size={24} /> : 'Save Changes'}
-                </Button>
-                <Button
-                  component={RouterLink}
-                  to={`/lbaas-frontend/${vipId}/view`}
-                  variant="outlined"
-                  style={{ marginLeft: '10px' }}
-                >
-                  Cancel
-                </Button>
-              </Grid>
+          <Grid container spacing={3}>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="subtitle1"><strong>FQDN:</strong> {vipDetails.vip_fqdn}</Typography>
             </Grid>
-          </form>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="subtitle1"><strong>IP Address:</strong> {vipDetails.vip_ip}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={3}>
+              <Typography variant="subtitle1"><strong>Port:</strong> {vipDetails.port}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={3}>
+              <Typography variant="subtitle1"><strong>Protocol:</strong> {vipDetails.protocol}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={3}>
+              <Typography variant="subtitle1"><strong>Environment:</strong> {vipDetails.environment}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={3}>
+              <Typography variant="subtitle1"><strong>Datacenter:</strong> {vipDetails.datacenter}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="subtitle1"><strong>Owner:</strong> {vipDetails.owner}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="subtitle1"><strong>Status:</strong> {getStatusComponent(vipDetails.status)}</Typography>
+            </Grid>
+            {vipDetails.created_at && (
+              <Grid item xs={12} sm={6}>
+                <Typography variant="subtitle1"><strong>Created At:</strong> {new Date(vipDetails.created_at).toLocaleString()}</Typography>
+              </Grid>
+            )}
+            {vipDetails.updated_at && (
+              <Grid item xs={12} sm={6}>
+                <Typography variant="subtitle1"><strong>Last Updated:</strong> {new Date(vipDetails.updated_at).toLocaleString()}</Typography>
+              </Grid>
+            )}
+
+            {vipDetails.pool_members && vipDetails.pool_members.length > 0 && (
+              <Grid item xs={12}>
+                <Divider style={{ margin: '20px 0' }} />
+                <Typography variant="h6">Pool Members</Typography>
+                <List dense>
+                  {vipDetails.pool_members.map((member, index) => (
+                    <ListItem key={index}>
+                      <ListItemText 
+                        primary={`IP: ${member.ip}, Port: ${member.port}, Enabled: ${member.enabled}`}
+                        secondary={member.status ? `Status: ${member.status}` : ''}
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              </Grid>
+            )}
+
+            {vipDetails.monitor && (
+              <Grid item xs={12}>
+                <Divider style={{ margin: '20px 0' }} />
+                <Typography variant="h6">Health Monitor</Typography>
+                <Typography variant="body2"><strong>Type:</strong> {vipDetails.monitor.type}</Typography>
+                {vipDetails.monitor.port && <Typography variant="body2"><strong>Port:</strong> {vipDetails.monitor.port}</Typography>}
+                {vipDetails.monitor.send_string && <Typography variant="body2"><strong>Send String:</strong> {vipDetails.monitor.send_string}</Typography>}
+                {vipDetails.monitor.receive_string && <Typography variant="body2"><strong>Receive String:</strong> {vipDetails.monitor.receive_string}</Typography>}
+                {vipDetails.monitor.interval && <Typography variant="body2"><strong>Interval:</strong> {vipDetails.monitor.interval}s</Typography>}
+                {vipDetails.monitor.timeout && <Typography variant="body2"><strong>Timeout:</strong> {vipDetails.monitor.timeout}s</Typography>}
+              </Grid>
+            )}
+            
+            {vipDetails.persistence && (
+              <Grid item xs={12}>
+                <Divider style={{ margin: '20px 0' }} />
+                <Typography variant="h6">Persistence</Typography>
+                <Typography variant="body2"><strong>Type:</strong> {vipDetails.persistence.type}</Typography>
+                {vipDetails.persistence.timeout && <Typography variant="body2"><strong>Timeout:</strong> {vipDetails.persistence.timeout}s</Typography>}
+              </Grid>
+            )}
+          </Grid>
         </Paper>
+        
+        {/* Navigation buttons with consistent route structure */}
+        <Grid container spacing={2} style={{ marginTop: '20px' }}>
+          <Grid item>
+            <Button
+              component={RouterLink}
+              to={`/lbaas-frontend/${vipId}/output`}
+              variant="outlined"
+              color="primary"
+              disabled={!lbaasApi.isAuthenticated()}
+            >
+              View Configuration Output
+            </Button>
+          </Grid>
+          <Grid item>
+            <Button
+              component={RouterLink}
+              to={`/lbaas-frontend/${vipId}/promote`}
+              variant="outlined"
+              color="primary"
+              disabled={!lbaasApi.isAuthenticated()}
+            >
+              Promote to New Environment
+            </Button>
+          </Grid>
+        </Grid>
       </Content>
       
       {/* Login Dialog */}
